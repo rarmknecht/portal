@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Portal</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #111;
+      color: #eee;
+      padding: 2rem;
+      min-height: 100vh;
+    }
+    h1 { font-size: 1.5rem; font-weight: 600; margin-bottom: 0.25rem; }
+    .subtitle { color: #888; font-size: 0.875rem; margin-bottom: 2rem; }
+    .card {
+      background: #1e1e1e;
+      border: 1px solid #333;
+      border-radius: 8px;
+      padding: 1.25rem 1.5rem;
+      margin-bottom: 1.25rem;
+    }
+    .card h2 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: #666; margin-bottom: 0.75rem; }
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.875rem;
+      font-weight: 500;
+    }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; }
+    .dot.offline { background: #ef4444; }
+    .info-row { display: flex; gap: 2rem; margin-top: 0.75rem; }
+    .info-item label { font-size: 0.7rem; color: #666; text-transform: uppercase; letter-spacing: 0.05em; display: block; margin-bottom: 0.2rem; }
+    .info-item span { font-size: 0.9rem; font-family: monospace; color: #ccc; }
+    .library-list { list-style: none; }
+    .library-list li {
+      padding: 0.5rem 0;
+      border-bottom: 1px solid #2a2a2a;
+      font-size: 0.875rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .library-list li:last-child { border-bottom: none; }
+    .lib-name { font-weight: 500; color: #eee; }
+    .lib-path { color: #666; font-family: monospace; font-size: 0.8rem; }
+    .empty { color: #555; font-size: 0.875rem; font-style: italic; }
+    #error-banner {
+      background: #3b1010;
+      border: 1px solid #7f2020;
+      border-radius: 6px;
+      padding: 0.75rem 1rem;
+      color: #f87171;
+      font-size: 0.875rem;
+      margin-bottom: 1.25rem;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <h1>Portal</h1>
+  <p class="subtitle">Personal media agent</p>
+
+  <div id="error-banner"></div>
+
+  <div class="card">
+    <h2>Agent Status</h2>
+    <div class="status-badge">
+      <span class="dot" id="status-dot"></span>
+      <span id="status-text">Connecting…</span>
+    </div>
+    <div class="info-row">
+      <div class="info-item">
+        <label>Media API</label>
+        <span id="media-port">—</span>
+      </div>
+      <div class="info-item">
+        <label>Web UI</label>
+        <span id="ui-port">—</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Libraries</h2>
+    <ul class="library-list" id="library-list">
+      <li class="empty">Loading…</li>
+    </ul>
+  </div>
+
+  <script>
+    async function refresh() {
+      try {
+        const res = await fetch('/api/status');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+
+        document.getElementById('status-dot').className = 'dot';
+        document.getElementById('status-text').textContent = data.status === 'running' ? 'Running' : data.status;
+        document.getElementById('media-port').textContent = `:${data.media_api_port}`;
+        document.getElementById('ui-port').textContent = `:${data.web_ui_port}`;
+
+        const list = document.getElementById('library-list');
+        if (data.libraries.length === 0) {
+          list.innerHTML = '<li class="empty">No libraries configured — edit ~/.portal/config.toml</li>';
+        } else {
+          list.innerHTML = data.libraries.map(lib =>
+            `<li><div><div class="lib-name">${lib.name}</div><div class="lib-path">${lib.path}</div></div></li>`
+          ).join('');
+        }
+
+        document.getElementById('error-banner').style.display = 'none';
+      } catch (err) {
+        const dot = document.getElementById('status-dot');
+        dot.className = 'dot offline';
+        document.getElementById('status-text').textContent = 'Unreachable';
+        const banner = document.getElementById('error-banner');
+        banner.textContent = `Could not reach agent: ${err.message}`;
+        banner.style.display = 'block';
+      }
+    }
+
+    refresh();
+    setInterval(refresh, 5000);
+  </script>
+</body>
+</html>

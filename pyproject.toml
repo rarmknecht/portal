@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "portal"
+version = "0.1.0"
+description = "Personal media agent — stream your local media to your phone"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.111.0",
+    "uvicorn[standard]>=0.29.0",
+    "aiosqlite>=0.20.0",
+    "ffmpeg-python>=0.2.0",
+    "zeroconf>=0.132.0",
+    "watchdog>=4.0.0",
+    "tomli>=2.0.1; python_version < '3.11'",
+    "python-multipart>=0.0.9",
+    "aiofiles>=23.2.1",
+]
+
+[project.scripts]
+portal = "portal.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["portal"]
