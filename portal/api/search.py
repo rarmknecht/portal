@@ -2,7 +2,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
 
-from portal import db, services
+from portal import db, path_registry, services
 
 router = APIRouter()
 
@@ -23,7 +23,7 @@ async def search(
         "query": q,
         "library": str(matched_root),
         "results": [
-            {"path": r.path, "name": Path(r.path).name, "type": r.media_type, "size": r.size}
+            {"path": path_registry.token_for(Path(r.path)), "name": Path(r.path).name, "type": r.media_type, "size": r.size}
             for r in records
         ],
     }

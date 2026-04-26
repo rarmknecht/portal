@@ -16,7 +16,21 @@ from portal.media_types import media_type as _media_type
 
 log = logging.getLogger(__name__)
 
-_SCAN_CONCURRENCY = 64  # max concurrent ffprobe + db writes during startup scan
+_SCAN_CONCURRENCY = 64   # max concurrent ffprobe OS subprocesses during startup scan (spread across cores by OS)
+_WATCHER_CONCURRENCY = 24  # max concurrent ffprobe OS subprocesses for live watchdog events
+_PROGRESS_INTERVAL = 30  # seconds between progress log lines during scan
+
+_progress: dict = {"active": False, "total": 0, "done": 0}
+
+
+def scan_progress() -> dict:
+    p = _progress
+    return {
+        "active": p["active"],
+        "total": p["total"],
+        "done": p["done"],
+        "remaining": max(0, p["total"] - p["done"]),
+    }
 
 
 async def _probe_file(path: Path) -> tuple[float | None, str | None]:
@@ -52,6 +66,12 @@ async def _index_file(path: Path, db_path: Path) -> None:
         return
 
     stat = path.stat()
+
+    # Skip if already indexed with the same mtime (file unchanged)
+    existing = await db.get(db_path, str(path))
+    if existing is not None and existing.mtime == stat.st_mtime:
+        return
+
     duration, codec = await _probe_file(path)
     record = db.MediaRecord(
         path=str(path),
@@ -64,22 +84,58 @@ async def _index_file(path: Path, db_path: Path) -> None:
     await db.upsert(db_path, record)
 
 
-async def full_scan(roots: list[Path], db_path: Path) -> None:
-    log.info("Starting full index scan of %d roots", len(roots))
-    sem = asyncio.Semaphore(_SCAN_CONCURRENCY)
+async def index_folder(files: list[Path], db_path: Path) -> None:
+    """Index only the given files (those in a single viewed folder)."""
+    sem = asyncio.Semaphore(8)
 
     async def _bounded(path: Path) -> None:
         async with sem:
             await _index_file(path, db_path)
 
-    tasks = []
-    for root in roots:
-        for dirpath, _, filenames in os.walk(root):
-            for fname in filenames:
-                tasks.append(_bounded(Path(dirpath) / fname))
-    if tasks:
-        await asyncio.gather(*tasks, return_exceptions=True)
-    log.info("Full scan complete")
+    await asyncio.gather(*[_bounded(f) for f in files], return_exceptions=True)
+
+
+async def full_scan(roots: list[Path], db_path: Path) -> None:
+    _progress.update(active=True, total=0, done=0)
+
+    async def _reporter() -> None:
+        while _progress["active"]:
+            await asyncio.sleep(_PROGRESS_INTERVAL)
+            if _progress["active"]:
+                p = _progress
+                if p["total"] == 0:
+                    log.info("Scan in progress: collecting file list…")
+                else:
+                    log.info("Scan progress: %d / %d complete (%d remaining)", p["done"], p["total"], p["total"] - p["done"])
+
+    reporter = asyncio.create_task(_reporter())
+    try:
+        def _collect() -> list[Path]:
+            return [
+                Path(dirpath) / fname
+                for root in roots
+                for dirpath, _, filenames in os.walk(root)
+                for fname in filenames
+            ]
+
+        all_files = await asyncio.to_thread(_collect)
+        _progress["total"] = len(all_files)
+        log.info("Scan started: %d files to index across %d roots", len(all_files), len(roots))
+
+        sem = asyncio.Semaphore(_SCAN_CONCURRENCY)
+
+        async def _bounded(path: Path) -> None:
+            async with sem:
+                await _index_file(path, db_path)
+            _progress["done"] += 1
+
+        if all_files:
+            await asyncio.gather(*[_bounded(f) for f in all_files], return_exceptions=True)
+    finally:
+        _progress["active"] = False
+        reporter.cancel()
+
+    log.info("Scan complete: %d / %d files indexed", _progress["done"], _progress["total"])
 
 
 class _PortalEventHandler(FileSystemEventHandler):
@@ -104,16 +160,22 @@ class _PortalEventHandler(FileSystemEventHandler):
 async def _process_events(queue: asyncio.Queue, db_path: Path) -> None:
     # Debounce: track in-flight paths to skip duplicate inotify events (content + metadata writes)
     in_flight: set[str] = set()
+    sem = asyncio.Semaphore(_WATCHER_CONCURRENCY)
+
+    async def _handle(path_str: str) -> None:
+        async with sem:
+            try:
+                await _index_file(Path(path_str), db_path)
+            finally:
+                in_flight.discard(path_str)
+
     while True:
         kind, path_str = await queue.get()
         if kind in ("created", "modified"):
             if path_str in in_flight:
                 continue
             in_flight.add(path_str)
-            try:
-                await _index_file(Path(path_str), db_path)
-            finally:
-                in_flight.discard(path_str)
+            asyncio.create_task(_handle(path_str))
         elif kind == "deleted":
             await db.remove(db_path, path_str)
 

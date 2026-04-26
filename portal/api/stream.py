@@ -8,7 +8,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
 
-from portal import allowlist, services
+from portal import path_registry, services
 
 router = APIRouter()
 
@@ -20,7 +20,7 @@ async def stream(
     request: Request,
     path: str = Query(..., max_length=4096),
 ) -> Response:
-    resolved = allowlist.resolve_and_check(path, services.roots())
+    resolved = path_registry.resolve_and_check(path, services.roots())
     if not resolved.is_file():
         raise HTTPException(status_code=400, detail="Not a file")
 

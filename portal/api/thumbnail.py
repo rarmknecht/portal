@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 
-from portal import allowlist, services, thumbnailer
+from portal import path_registry, services, thumbnailer
 
 router = APIRouter()
 
@@ -11,7 +11,7 @@ async def thumbnail(
     path: str = Query(..., max_length=4096),
     size: int = Query(default=320, ge=64, le=1280),
 ) -> Response:
-    resolved = allowlist.resolve_and_check(path, services.roots())
+    resolved = path_registry.resolve_and_check(path, services.roots())
     cfg = services.config()
 
     data = await thumbnailer.get_thumbnail(

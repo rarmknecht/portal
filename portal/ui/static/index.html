@@ -5,24 +5,102 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Portal</title>
   <style>
+    /* ── Reset & Base ─────────────────────────────────────────────── */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0d0d0d;
+      --surface:   #161616;
+      --surface-2: #1e1e1e;
+      --border:    #262626;
+      --border-2:  #2e2e2e;
+      --text:      #e8e8e8;
+      --text-2:    #999;
+      --text-3:    #555;
+      --accent:    #3b82f6;
+      --accent-hv: #2563eb;
+      --green:     #22c55e;
+      --red:       #ef4444;
+      --radius:    8px;
+      --radius-sm: 5px;
+    }
+
     body {
-      font-family: system-ui, -apple-system, sans-serif;
-      background: #111;
-      color: #eee;
-      padding: 2rem;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
       min-height: 100vh;
+      font-size: 14px;
+      line-height: 1.5;
     }
-    h1 { font-size: 1.5rem; font-weight: 600; margin-bottom: 0.25rem; }
-    .subtitle { color: #888; font-size: 0.875rem; margin-bottom: 2rem; }
+
+    /* ── Layout ───────────────────────────────────────────────────── */
+    .shell {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 0 1.5rem 4rem;
+    }
+
+    /* ── Header ───────────────────────────────────────────────────── */
+    header {
+      display: flex;
+      align-items: center;
+      gap: 2rem;
+      padding: 1.25rem 0 0;
+      margin-bottom: 2rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .wordmark {
+      font-size: 1rem;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      color: var(--text);
+      white-space: nowrap;
+      padding-bottom: 1.25rem;
+    }
+
+    nav { display: flex; gap: 0.125rem; }
+
+    .tab {
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: var(--text-2);
+      padding: 0.5rem 0.875rem 1.25rem;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -1px;
+      transition: color 0.15s, border-color 0.15s;
+      white-space: nowrap;
+    }
+    .tab:hover { color: var(--text); }
+    .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+    /* ── Views ────────────────────────────────────────────────────── */
+    .view { display: none; }
+    .view.active { display: block; }
+
+    /* ── Cards ────────────────────────────────────────────────────── */
     .card {
-      background: #1e1e1e;
-      border: 1px solid #333;
-      border-radius: 8px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
       padding: 1.25rem 1.5rem;
-      margin-bottom: 1.25rem;
+      margin-bottom: 1rem;
     }
-    .card h2 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: #666; margin-bottom: 0.75rem; }
+
+    .card-title {
+      font-size: 0.68rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.09em;
+      color: var(--text-3);
+      margin-bottom: 1rem;
+    }
+
+    /* ── Status-specific ──────────────────────────────────────────── */
     .status-badge {
       display: inline-flex;
       align-items: center;
@@ -30,92 +108,553 @@
       font-size: 0.875rem;
       font-weight: 500;
     }
-    .dot { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; }
-    .dot.offline { background: #ef4444; }
-    .info-row { display: flex; gap: 2rem; margin-top: 0.75rem; }
-    .info-item label { font-size: 0.7rem; color: #666; text-transform: uppercase; letter-spacing: 0.05em; display: block; margin-bottom: 0.2rem; }
-    .info-item span { font-size: 0.9rem; font-family: monospace; color: #ccc; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); flex-shrink: 0; }
+    .dot.offline { background: var(--red); }
+
+    .info-row { display: flex; gap: 2rem; margin-top: 0.875rem; }
+    .info-item label {
+      font-size: 0.68rem;
+      color: var(--text-3);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      display: block;
+      margin-bottom: 0.2rem;
+    }
+    .info-item span { font-size: 0.875rem; font-family: monospace; color: #ccc; }
+
     .library-list { list-style: none; }
     .library-list li {
       padding: 0.5rem 0;
-      border-bottom: 1px solid #2a2a2a;
+      border-bottom: 1px solid var(--border);
       font-size: 0.875rem;
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
     }
     .library-list li:last-child { border-bottom: none; }
-    .lib-name { font-weight: 500; color: #eee; }
-    .lib-path { color: #666; font-family: monospace; font-size: 0.8rem; }
-    .empty { color: #555; font-size: 0.875rem; font-style: italic; }
+    .lib-name { font-weight: 500; }
+    .lib-path { color: var(--text-3); font-family: monospace; font-size: 0.8rem; margin-top: 0.1rem; }
+    .empty { color: var(--text-3); font-size: 0.875rem; font-style: italic; }
+
     #error-banner {
-      background: #3b1010;
-      border: 1px solid #7f2020;
-      border-radius: 6px;
+      background: #1c0a0a;
+      border: 1px solid #4a1a1a;
+      border-radius: var(--radius-sm);
       padding: 0.75rem 1rem;
       color: #f87171;
       font-size: 0.875rem;
-      margin-bottom: 1.25rem;
+      margin-bottom: 1rem;
       display: none;
+    }
+
+    #scan-card { display: none; }
+    .scan-label { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.625rem; }
+    .scan-counts { font-size: 0.875rem; color: #ccc; }
+    .scan-counts strong { color: var(--text); font-family: monospace; }
+    .progress-track { height: 5px; background: var(--border-2); border-radius: 3px; overflow: hidden; }
+    .progress-fill {
+      height: 100%;
+      background: var(--accent);
+      border-radius: 3px;
+      transition: width 0.4s ease;
+    }
+    .spinner {
+      width: 10px; height: 10px;
+      border: 2px solid var(--accent);
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      flex-shrink: 0;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Settings form ────────────────────────────────────────────── */
+    .form-row {
+      display: grid;
+      grid-template-columns: 160px 1fr;
+      align-items: center;
+      gap: 1rem;
+      padding: 0.7rem 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .form-row:last-child { border-bottom: none; padding-bottom: 0; }
+    .form-row:first-child { padding-top: 0; }
+
+    .form-label {
+      font-size: 0.8rem;
+      color: var(--text-2);
+      font-weight: 500;
+      line-height: 1.3;
+    }
+    .form-hint {
+      font-size: 0.7rem;
+      color: var(--text-3);
+      margin-top: 0.15rem;
+    }
+
+    .field-row { display: flex; gap: 0.5rem; align-items: center; }
+
+    input[type="text"],
+    input[type="number"],
+    input[type="password"],
+    select {
+      background: var(--bg);
+      border: 1px solid var(--border-2);
+      border-radius: var(--radius-sm);
+      color: var(--text);
+      padding: 0.45rem 0.75rem;
+      font-size: 0.875rem;
+      font-family: 'SF Mono', 'Fira Code', 'Roboto Mono', monospace;
+      width: 100%;
+      transition: border-color 0.15s, box-shadow 0.15s;
+      appearance: none;
+    }
+    input[type="text"]:focus,
+    input[type="number"]:focus,
+    input[type="password"]:focus,
+    select:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(59,130,246,0.15);
+    }
+    input[type="number"] { width: 90px; text-align: right; }
+
+    /* Custom select arrow */
+    .select-wrap { position: relative; }
+    .select-wrap::after {
+      content: "";
+      position: absolute;
+      right: 0.75rem;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 0; height: 0;
+      border-left: 4px solid transparent;
+      border-right: 4px solid transparent;
+      border-top: 5px solid var(--text-3);
+      pointer-events: none;
+    }
+    .select-wrap select { padding-right: 2rem; cursor: pointer; }
+
+    /* Token field with show/hide button */
+    .token-wrap { position: relative; display: flex; gap: 0.5rem; }
+    .token-wrap input { flex: 1; }
+    .btn-ghost {
+      background: none;
+      border: 1px solid var(--border-2);
+      border-radius: var(--radius-sm);
+      color: var(--text-3);
+      cursor: pointer;
+      font-size: 0.75rem;
+      padding: 0.45rem 0.625rem;
+      white-space: nowrap;
+      transition: color 0.15s, border-color 0.15s;
+      flex-shrink: 0;
+    }
+    .btn-ghost:hover { color: var(--text-2); border-color: #444; }
+
+    /* Toggle switch */
+    .toggle {
+      position: relative;
+      display: inline-flex;
+      width: 38px;
+      height: 21px;
+      flex-shrink: 0;
+    }
+    .toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
+    .toggle-track {
+      position: absolute;
+      inset: 0;
+      background: var(--border-2);
+      border-radius: 10.5px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .toggle-thumb {
+      position: absolute;
+      height: 15px;
+      width: 15px;
+      left: 3px;
+      top: 3px;
+      background: #777;
+      border-radius: 50%;
+      transition: transform 0.2s, background 0.2s;
+      pointer-events: none;
+    }
+    .toggle input:checked ~ .toggle-track { background: var(--accent); }
+    .toggle input:checked ~ .toggle-thumb { transform: translateX(17px); background: #fff; }
+    .toggle input:not(:checked) ~ .toggle-thumb { background: #555; }
+    .toggle input:focus-visible ~ .toggle-track {
+      box-shadow: 0 0 0 3px rgba(59,130,246,0.25);
+    }
+
+    /* Library list in settings */
+    .lib-entries { margin-bottom: 0.75rem; }
+    .lib-entry {
+      display: flex;
+      align-items: center;
+      gap: 0.625rem;
+      padding: 0.5rem 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .lib-entry:last-child { border-bottom: none; }
+    .lib-entry-path {
+      flex: 1;
+      font-family: 'SF Mono', 'Fira Code', 'Roboto Mono', monospace;
+      font-size: 0.8rem;
+      color: var(--text-2);
+      word-break: break-all;
+    }
+    .btn-remove {
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: var(--text-3);
+      padding: 0.25rem 0.375rem;
+      border-radius: var(--radius-sm);
+      font-size: 1rem;
+      line-height: 1;
+      transition: color 0.15s, background 0.15s;
+      flex-shrink: 0;
+    }
+    .btn-remove:hover { color: var(--red); background: rgba(239,68,68,0.08); }
+
+    .lib-add-row {
+      display: flex;
+      gap: 0.5rem;
+      margin-top: 0.5rem;
+      padding-top: 0.75rem;
+      border-top: 1px solid var(--border);
+    }
+    .lib-add-row input { flex: 1; }
+
+    .no-libs {
+      font-size: 0.8rem;
+      color: var(--text-3);
+      font-style: italic;
+      padding: 0.375rem 0 0.75rem;
+    }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.4rem;
+      border: none;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      font-size: 0.8rem;
+      font-weight: 500;
+      padding: 0.45rem 0.875rem;
+      transition: background 0.15s, opacity 0.15s;
+      white-space: nowrap;
+    }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+      font-size: 0.875rem;
+      padding: 0.6rem 1.5rem;
+    }
+    .btn-primary:not(:disabled):hover { background: var(--accent-hv); }
+
+    .btn-secondary {
+      background: var(--surface-2);
+      color: var(--text-2);
+      border: 1px solid var(--border-2);
+    }
+    .btn-secondary:not(:disabled):hover { background: #272727; color: var(--text); }
+
+    /* Save bar */
+    .save-bar {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-top: 1.5rem;
+      padding-top: 1.5rem;
+      border-top: 1px solid var(--border);
+    }
+
+    .save-feedback {
+      font-size: 0.8rem;
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+    .save-feedback.visible { opacity: 1; }
+    .save-feedback.success { color: var(--green); }
+    .save-feedback.error   { color: var(--red); }
+
+    /* Settings loading state */
+    #settings-loading {
+      text-align: center;
+      padding: 3rem 0;
+      color: var(--text-3);
+      font-size: 0.875rem;
+    }
+    #settings-form { display: none; }
+
+    /* ── Responsive ───────────────────────────────────────────────── */
+    @media (max-width: 520px) {
+      .form-row { grid-template-columns: 1fr; gap: 0.375rem; }
+      .info-row { gap: 1.25rem; }
     }
   </style>
 </head>
 <body>
-  <h1>Portal</h1>
-  <p class="subtitle">Personal media agent</p>
+  <div class="shell">
 
-  <div id="error-banner"></div>
+    <header>
+      <span class="wordmark">Portal</span>
+      <nav>
+        <button class="tab active" data-view="status">Status</button>
+        <button class="tab" data-view="settings">Settings</button>
+      </nav>
+    </header>
 
-  <div class="card">
-    <h2>Agent Status</h2>
-    <div class="status-badge">
-      <span class="dot" id="status-dot"></span>
-      <span id="status-text">Connecting…</span>
-    </div>
-    <div class="info-row">
-      <div class="info-item">
-        <label>Media API</label>
-        <span id="media-port">—</span>
+    <!-- ── Status View ────────────────────────────────────────────── -->
+    <div id="view-status" class="view active">
+
+      <div id="error-banner"></div>
+
+      <div class="card">
+        <div class="card-title">Agent</div>
+        <div class="status-badge">
+          <span class="dot" id="status-dot"></span>
+          <span id="status-text">Connecting…</span>
+        </div>
+        <div class="info-row">
+          <div class="info-item">
+            <label>Media API</label>
+            <span id="media-port">—</span>
+          </div>
+          <div class="info-item">
+            <label>Web UI</label>
+            <span id="ui-port">—</span>
+          </div>
+        </div>
       </div>
-      <div class="info-item">
-        <label>Web UI</label>
-        <span id="ui-port">—</span>
-      </div>
-    </div>
-  </div>
 
-  <div class="card">
-    <h2>Libraries</h2>
-    <ul class="library-list" id="library-list">
-      <li class="empty">Loading…</li>
-    </ul>
-  </div>
+      <div class="card" id="scan-card">
+        <div class="card-title">Indexing</div>
+        <div class="scan-label">
+          <div class="spinner"></div>
+          <span id="scan-counts" class="scan-counts">Scanning…</span>
+        </div>
+        <div class="progress-track">
+          <div class="progress-fill" id="scan-bar" style="width:0%"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Libraries</div>
+        <ul class="library-list" id="library-list">
+          <li class="empty">Loading…</li>
+        </ul>
+      </div>
+
+    </div><!-- /status -->
+
+    <!-- ── Settings View ──────────────────────────────────────────── -->
+    <div id="view-settings" class="view">
+
+      <div id="settings-loading">Loading configuration…</div>
+
+      <div id="settings-form">
+
+        <!-- Network -->
+        <div class="card">
+          <div class="card-title">Network</div>
+
+          <div class="form-row">
+            <div>
+              <div class="form-label">Media API</div>
+              <div class="form-hint">Accessible from mobile devices</div>
+            </div>
+            <div class="field-row">
+              <input type="text" id="s-media-bind" placeholder="0.0.0.0" spellcheck="false" autocomplete="off">
+              <span style="color:var(--text-3);flex-shrink:0">:</span>
+              <input type="number" id="s-media-port" min="1" max="65535" placeholder="7842">
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div>
+              <div class="form-label">Web UI</div>
+              <div class="form-hint">This interface</div>
+            </div>
+            <div class="field-row">
+              <input type="text" id="s-ui-bind" placeholder="127.0.0.1" spellcheck="false" autocomplete="off">
+              <span style="color:var(--text-3);flex-shrink:0">:</span>
+              <input type="number" id="s-ui-port" min="1" max="65535" placeholder="5567">
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div>
+              <div class="form-label">API Token</div>
+              <div class="form-hint">Leave blank to disable auth</div>
+            </div>
+            <div class="token-wrap">
+              <input type="password" id="s-api-token" placeholder="Optional shared secret" autocomplete="off" spellcheck="false">
+              <button class="btn-ghost" id="token-toggle" onclick="toggleToken()" type="button">Show</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Libraries -->
+        <div class="card">
+          <div class="card-title">Libraries</div>
+          <div id="lib-entries" class="lib-entries"></div>
+          <div class="lib-add-row">
+            <input type="text" id="new-lib-input" placeholder="/path/to/media  or  ~/Movies"
+                   spellcheck="false" autocomplete="off"
+                   onkeydown="if(event.key==='Enter') addLibrary()">
+            <button class="btn btn-secondary" onclick="addLibrary()" type="button">Add</button>
+          </div>
+        </div>
+
+        <!-- Indexing -->
+        <div class="card">
+          <div class="card-title">Indexing</div>
+
+          <div class="form-row">
+            <div class="form-label">Mode</div>
+            <div class="select-wrap" style="max-width:200px;">
+              <select id="s-index-mode">
+                <option value="background">Background</option>
+                <option value="startup">Startup only</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-label">Scan on startup</div>
+            <label class="toggle" title="Scan all library roots when portal starts">
+              <input type="checkbox" id="s-scan-startup">
+              <span class="toggle-track"></span>
+              <span class="toggle-thumb"></span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Thumbnails -->
+        <div class="card">
+          <div class="card-title">Thumbnails</div>
+
+          <div class="form-row">
+            <div class="form-label">Cache directory</div>
+            <input type="text" id="s-thumb-dir" placeholder="~/.portal/thumbnails" spellcheck="false" autocomplete="off">
+          </div>
+
+          <div class="form-row">
+            <div class="form-label">Max cache size</div>
+            <div class="field-row">
+              <input type="number" id="s-thumb-size" min="1" max="100000" placeholder="500">
+              <span style="color:var(--text-3);font-size:0.8rem;flex-shrink:0">MB</span>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div>
+              <div class="form-label">Prefer embedded art</div>
+              <div class="form-hint">Extract cover art before generating</div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="s-thumb-embedded">
+              <span class="toggle-track"></span>
+              <span class="toggle-thumb"></span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Logging -->
+        <div class="card">
+          <div class="card-title">Logging</div>
+
+          <div class="form-row">
+            <div class="form-label">Log directory</div>
+            <input type="text" id="s-log-dir" placeholder="~/.portal/logs" spellcheck="false" autocomplete="off">
+          </div>
+
+          <div class="form-row">
+            <div class="form-label">Max log size</div>
+            <div class="field-row">
+              <input type="number" id="s-log-size" min="1" max="10000" placeholder="150">
+              <span style="color:var(--text-3);font-size:0.8rem;flex-shrink:0">MB</span>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-label">Rotation</div>
+            <div class="select-wrap" style="max-width:200px;">
+              <select id="s-log-rotation">
+                <option value="size">By size</option>
+                <option value="time">By time</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- Save bar -->
+        <div class="save-bar">
+          <button class="btn btn-primary" id="save-btn" onclick="saveConfig()" type="button">
+            Save Settings
+          </button>
+          <span class="save-feedback" id="save-feedback"></span>
+        </div>
+
+      </div><!-- /settings-form -->
+    </div><!-- /settings -->
+
+  </div><!-- /shell -->
 
   <script>
-    async function refresh() {
+    // ── Navigation ──────────────────────────────────────────────────
+    let settingsLoaded = false;
+
+    document.querySelectorAll('.tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+        tab.classList.add('active');
+        document.getElementById('view-' + tab.dataset.view).classList.add('active');
+        if (tab.dataset.view === 'settings' && !settingsLoaded) loadConfig();
+      });
+    });
+
+    // ── Status polling ───────────────────────────────────────────────
+    async function refreshStatus() {
       try {
         const res = await fetch('/api/status');
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
+        const d = await res.json();
 
         document.getElementById('status-dot').className = 'dot';
-        document.getElementById('status-text').textContent = data.status === 'running' ? 'Running' : data.status;
-        document.getElementById('media-port').textContent = `:${data.media_api_port}`;
-        document.getElementById('ui-port').textContent = `:${data.web_ui_port}`;
+        document.getElementById('status-text').textContent = d.status === 'running' ? 'Running' : d.status;
+        document.getElementById('media-port').textContent = `:${d.media_api_port}`;
+        document.getElementById('ui-port').textContent = `:${d.web_ui_port}`;
 
         const list = document.getElementById('library-list');
-        if (data.libraries.length === 0) {
-          list.innerHTML = '<li class="empty">No libraries configured — edit ~/.portal/config.toml</li>';
+        if (!d.libraries.length) {
+          list.innerHTML = '<li class="empty">No libraries configured — open Settings to add one.</li>';
         } else {
-          list.innerHTML = data.libraries.map(lib =>
-            `<li><div><div class="lib-name">${lib.name}</div><div class="lib-path">${lib.path}</div></div></li>`
+          list.innerHTML = d.libraries.map(lib =>
+            `<li><div class="lib-name">${esc(lib.name)}</div><div class="lib-path">${esc(lib.path)}</div></li>`
           ).join('');
         }
 
+        const scan = d.scan || {};
+        const scanCard = document.getElementById('scan-card');
+        if (scan.active) {
+          const pct = scan.total > 0 ? Math.round(scan.done / scan.total * 100) : 0;
+          document.getElementById('scan-counts').innerHTML =
+            `<strong>${scan.done.toLocaleString()}</strong> / <strong>${scan.total.toLocaleString()}</strong> indexed &nbsp;·&nbsp; <strong>${scan.remaining.toLocaleString()}</strong> remaining`;
+          document.getElementById('scan-bar').style.width = `${pct}%`;
+          scanCard.style.display = 'block';
+        } else {
+          scanCard.style.display = 'none';
+        }
         document.getElementById('error-banner').style.display = 'none';
       } catch (err) {
-        const dot = document.getElementById('status-dot');
-        dot.className = 'dot offline';
+        document.getElementById('status-dot').className = 'dot offline';
         document.getElementById('status-text').textContent = 'Unreachable';
         const banner = document.getElementById('error-banner');
         banner.textContent = `Could not reach agent: ${err.message}`;
@@ -123,8 +662,167 @@
       }
     }
 
-    refresh();
-    setInterval(refresh, 5000);
+    refreshStatus();
+    setInterval(refreshStatus, 5000);
+
+    // ── Settings ─────────────────────────────────────────────────────
+    let libraries = [];
+
+    async function loadConfig() {
+      settingsLoaded = true;
+      document.getElementById('settings-loading').style.display = '';
+      document.getElementById('settings-form').style.display = 'none';
+      try {
+        const res = await fetch('/api/config');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const cfg = await res.json();
+        applyConfig(cfg);
+        document.getElementById('settings-loading').style.display = 'none';
+        document.getElementById('settings-form').style.display = 'block';
+      } catch (err) {
+        document.getElementById('settings-loading').textContent = `Failed to load config: ${err.message}`;
+      }
+    }
+
+    function applyConfig(cfg) {
+      const a = cfg.agent || {};
+      set('s-media-bind', a.media_api_bind ?? '0.0.0.0');
+      set('s-media-port', a.media_api_port ?? 7842);
+      set('s-ui-bind',    a.web_ui_bind ?? '127.0.0.1');
+      set('s-ui-port',    a.web_ui_port ?? 5567);
+      set('s-api-token',  a.api_token ?? '');
+
+      libraries = (cfg.libraries || []).slice();
+      renderLibraries();
+
+      const idx = cfg.indexing || {};
+      setSelect('s-index-mode', idx.mode ?? 'background');
+      setCheck('s-scan-startup', idx.scan_on_startup ?? true);
+
+      const th = cfg.thumbnails || {};
+      set('s-thumb-dir',  th.cache_dir ?? '~/.portal/thumbnails');
+      set('s-thumb-size', th.max_cache_size_mb ?? 500);
+      setCheck('s-thumb-embedded', th.prefer_embedded ?? true);
+
+      const lg = cfg.logging || {};
+      set('s-log-dir',      lg.log_dir ?? '~/.portal/logs');
+      set('s-log-size',     lg.max_size_mb ?? 150);
+      setSelect('s-log-rotation', lg.rotation ?? 'size');
+    }
+
+    function collectConfig() {
+      return {
+        agent: {
+          media_api_bind: get('s-media-bind'),
+          media_api_port: parseInt(get('s-media-port'), 10) || 7842,
+          web_ui_bind:    get('s-ui-bind'),
+          web_ui_port:    parseInt(get('s-ui-port'), 10) || 5567,
+          api_token:      get('s-api-token'),
+        },
+        libraries: libraries.filter(p => p.trim()),
+        indexing: {
+          mode:            getSelect('s-index-mode'),
+          scan_on_startup: getCheck('s-scan-startup'),
+        },
+        thumbnails: {
+          cache_dir:        get('s-thumb-dir'),
+          max_cache_size_mb: parseInt(get('s-thumb-size'), 10) || 500,
+          prefer_embedded:  getCheck('s-thumb-embedded'),
+        },
+        logging: {
+          log_dir:    get('s-log-dir'),
+          max_size_mb: parseInt(get('s-log-size'), 10) || 150,
+          rotation:   getSelect('s-log-rotation'),
+        },
+      };
+    }
+
+    async function saveConfig() {
+      const btn = document.getElementById('save-btn');
+      const feedback = document.getElementById('save-feedback');
+      btn.disabled = true;
+      btn.textContent = 'Saving…';
+      feedback.className = 'save-feedback';
+
+      try {
+        const res = await fetch('/api/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(collectConfig()),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+        showFeedback('Saved — restart Portal to apply changes.', 'success');
+      } catch (err) {
+        showFeedback(`Save failed: ${err.message}`, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Save Settings';
+      }
+    }
+
+    function showFeedback(msg, kind) {
+      const el = document.getElementById('save-feedback');
+      el.textContent = msg;
+      el.className = `save-feedback ${kind} visible`;
+      clearTimeout(el._timer);
+      if (kind === 'success') {
+        el._timer = setTimeout(() => el.classList.remove('visible'), 6000);
+      }
+    }
+
+    // ── Libraries ────────────────────────────────────────────────────
+    function renderLibraries() {
+      const container = document.getElementById('lib-entries');
+      if (!libraries.length) {
+        container.innerHTML = '<div class="no-libs">No libraries added yet.</div>';
+        return;
+      }
+      container.innerHTML = libraries.map((p, i) =>
+        `<div class="lib-entry">
+           <span class="lib-entry-path">${esc(p)}</span>
+           <button class="btn-remove" title="Remove" onclick="removeLibrary(${i})">×</button>
+         </div>`
+      ).join('');
+    }
+
+    function addLibrary() {
+      const input = document.getElementById('new-lib-input');
+      const path = input.value.trim();
+      if (!path) return;
+      if (libraries.includes(path)) { input.value = ''; return; }
+      libraries.push(path);
+      renderLibraries();
+      input.value = '';
+      input.focus();
+    }
+
+    function removeLibrary(i) {
+      libraries.splice(i, 1);
+      renderLibraries();
+    }
+
+    // ── Token toggle ─────────────────────────────────────────────────
+    function toggleToken() {
+      const input = document.getElementById('s-api-token');
+      const btn   = document.getElementById('token-toggle');
+      if (input.type === 'password') {
+        input.type = 'text';
+        btn.textContent = 'Hide';
+      } else {
+        input.type = 'password';
+        btn.textContent = 'Show';
+      }
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────
+    const get       = id => document.getElementById(id).value;
+    const set       = (id, v) => { document.getElementById(id).value = v; };
+    const getSelect = id => document.getElementById(id).value;
+    const setSelect = (id, v) => { document.getElementById(id).value = v; };
+    const getCheck  = id => document.getElementById(id).checked;
+    const setCheck  = (id, v) => { document.getElementById(id).checked = !!v; };
+    const esc       = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   </script>
 </body>
 </html>

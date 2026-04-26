@@ -8,7 +8,7 @@ import sys
 import uvicorn
 from fastapi import FastAPI
 
-from portal import config as cfg_mod, db, discovery, indexer, services, thumbnailer
+from portal import auth, config as cfg_mod, db, discovery, indexer, services, thumbnailer
 from portal.allowlist import allowlist_roots
 from portal.api import health, libraries, browse, metadata, thumbnail, stream, search
 from portal.ui import routes as ui_routes
@@ -21,15 +21,17 @@ log = logging.getLogger("portal")
 
 
 def _build_media_app() -> FastAPI:
+    from fastapi import Depends
     app = FastAPI(title="Portal Media API", version="1.0")
     prefix = "/api/v1"
-    app.include_router(health.router, prefix=prefix)
-    app.include_router(libraries.router, prefix=prefix)
-    app.include_router(browse.router, prefix=prefix)
-    app.include_router(metadata.router, prefix=prefix)
-    app.include_router(thumbnail.router, prefix=prefix)
-    app.include_router(stream.router, prefix=prefix)
-    app.include_router(search.router, prefix=prefix)
+    guarded = {"dependencies": [Depends(auth.verify_token)]}
+    app.include_router(health.router, prefix=prefix)  # health exempt — used for connectivity probing
+    app.include_router(libraries.router, prefix=prefix, **guarded)
+    app.include_router(browse.router, prefix=prefix, **guarded)
+    app.include_router(metadata.router, prefix=prefix, **guarded)
+    app.include_router(thumbnail.router, prefix=prefix, **guarded)
+    app.include_router(stream.router, prefix=prefix, **guarded)
+    app.include_router(search.router, prefix=prefix, **guarded)
     return app
 
 
@@ -53,9 +55,6 @@ async def _run() -> None:
     thumbnailer.ensure_cache_dir(cfg.thumbnails.cache_dir)
 
     await db.init(cfg.db_path)
-
-    if cfg.indexing.scan_on_startup and roots:
-        asyncio.create_task(indexer.full_scan(roots, cfg.db_path))
 
     if roots:
         await indexer.start_watcher(roots, cfg.db_path)

@@ -21,6 +21,7 @@ class AgentConfig:
     media_api_port: int = 7842
     web_ui_bind: str = "127.0.0.1"
     web_ui_port: int = 5567
+    api_token: str = ""
 
 
 @dataclass
@@ -71,6 +72,7 @@ def load(path: Path = _DEFAULT_CONFIG_PATH) -> Config:
             media_api_port=agent.get("media_api_port", cfg.agent.media_api_port),
             web_ui_bind=agent.get("web_ui_bind", cfg.agent.web_ui_bind),
             web_ui_port=agent.get("web_ui_port", cfg.agent.web_ui_port),
+            api_token=agent.get("api_token", cfg.agent.api_token),
         )
 
     if libs := raw.get("libraries"):

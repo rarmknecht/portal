@@ -1,19 +1,19 @@
 from fastapi import APIRouter, Query
 
-from portal import allowlist, db, services
+from portal import db, path_registry, services
 
 router = APIRouter()
 
 
 @router.get("/metadata")
 async def metadata(path: str = Query(..., max_length=4096)) -> dict:
-    resolved = allowlist.resolve_and_check(path, services.roots())
+    resolved = path_registry.resolve_and_check(path, services.roots())
     cfg = services.config()
     record = await db.get(cfg.db_path, str(resolved))
 
     stat = resolved.stat()
     return {
-        "path": str(resolved),
+        "path": path_registry.token_for(resolved),
         "name": resolved.name,
         "size": stat.st_size,
         "mtime": stat.st_mtime,
