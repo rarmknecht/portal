@@ -83,7 +83,7 @@ async def search(db_path: Path, library_root: str, query: str, limit: int = 200)
     # Roots are stored as absolute resolved paths without a trailing slash;
     # strip one defensively in case a caller passes one anyway.
     root = library_root.rstrip("/") or "/"
-    root_pattern = f"{_like_escape(root)}/%"
+    root_pattern = _like_escape(root) + ("%" if root == "/" else "/%")
     query_pattern = f"%{_like_escape(query)}%"
     async with aiosqlite.connect(db_path) as db:
         async with db.execute(
