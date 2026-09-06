@@ -14,9 +14,16 @@ _registry: dict[str, Path] = {}
 
 
 def token_for(path: Path) -> str:
-    """Register *path* and return its opaque token. Idempotent for the same path."""
-    tok = hmac.new(_secret, str(path).encode(), hashlib.sha256).hexdigest()[:32]
-    _registry[tok] = path
+    """Register *path* and return its opaque token. Idempotent for the same path.
+
+    The path is canonicalized (symlinks and `..` resolved) before being
+    stored, so a token can never map to the lexical path of a symlink that
+    escapes its library root — every downstream consumer (browse, stream,
+    thumbnail, metadata) operates on the resolved target only.
+    """
+    real = path.resolve()
+    tok = hmac.new(_secret, str(real).encode(), hashlib.sha256).hexdigest()[:32]
+    _registry[tok] = real
     return tok
 
 
@@ -30,12 +37,17 @@ def resolve_and_check(token: str, roots: list[Path]) -> Path:
     if path is None:
         raise HTTPException(status_code=400, detail="Unknown path token")
 
+    # Re-resolve at check time too: the stored path is already canonical
+    # (token_for resolves before registering), but resolving again is cheap
+    # and guards against any future caller that registers a raw path.
+    real = path.resolve()
+
     for root in roots:
         try:
-            path.relative_to(root)
-            if not path.exists():
+            real.relative_to(root.resolve())
+            if not real.exists():
                 raise HTTPException(status_code=404, detail="Not found")
-            return path
+            return real
         except ValueError:
             continue
 

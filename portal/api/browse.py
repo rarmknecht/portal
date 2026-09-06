@@ -5,6 +5,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Query
 
 from portal import indexer, path_registry, services
+from portal.allowlist import within_any
 from portal.media_types import media_type
 
 log = logging.getLogger(__name__)
@@ -23,13 +24,30 @@ def _entry(p: Path) -> dict:
     }
 
 
+def _safe_entries(directory: Path, roots: list[Path]) -> list[Path]:
+    """List *directory*, dropping any entry whose resolved target (following
+    symlinks) escapes the allowlisted roots. A symlink inside a library that
+    points outside of it must never get a token or show up in a listing."""
+    resolved_roots = [r.resolve() for r in roots]
+    safe = []
+    for entry in directory.iterdir():
+        try:
+            real = entry.resolve()
+        except OSError:
+            continue
+        if not within_any(real, resolved_roots):
+            continue
+        safe.append(entry)
+    return safe
+
+
 @router.get("/browse")
 async def browse(path: str = Query(..., max_length=4096)) -> dict:
     resolved = path_registry.resolve_and_check(path, services.roots())
     if not resolved.is_dir():
         raise HTTPException(status_code=400, detail="Path is not a directory")
 
-    entries = sorted(resolved.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))
+    entries = sorted(_safe_entries(resolved, services.roots()), key=lambda p: (not p.is_dir(), p.name.lower()))
 
     media_files = [e for e in entries if e.is_file() and media_type(e) is not None]
     if media_files:

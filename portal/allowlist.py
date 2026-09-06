@@ -40,6 +40,16 @@ def _within_any(path: Path, roots: list[Path]) -> bool:
     return False
 
 
+def within_any(path: Path, roots: list[Path]) -> bool:
+    """Public helper: does the *resolved* path sit inside one of *roots*?
+
+    Callers must pass an already-`resolve()`d path and already-`resolve()`d
+    roots (or reuse `allowlist_roots`, which resolves them) — this only does
+    the lexical containment check, it does not canonicalize anything itself.
+    """
+    return _within_any(path, roots)
+
+
 def allowlist_roots(paths: list[str]) -> list[Path]:
     """Resolve and return only existing allowlist roots."""
     result = []
