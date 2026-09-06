@@ -14,12 +14,14 @@ from watchdog.observers import Observer
 from portal import db
 from portal.allowlist import within_any
 from portal.media_types import media_type as _media_type
+from portal.thumbnailer import _reap
 
 log = logging.getLogger(__name__)
 
 _SCAN_CONCURRENCY = 64   # max concurrent ffprobe OS subprocesses during startup scan (spread across cores by OS)
 _WATCHER_CONCURRENCY = 24  # max concurrent ffprobe OS subprocesses for live watchdog events
 _PROGRESS_INTERVAL = 30  # seconds between progress log lines during scan
+_FFPROBE_TIMEOUT = 10  # seconds
 
 _progress: dict = {"active": False, "total": 0, "done": 0}
 
@@ -42,13 +44,14 @@ async def _probe_file(path: Path) -> tuple[float | None, str | None]:
         "-show_streams", "-show_format",
         str(path),
     ]
+    proc: asyncio.subprocess.Process | None = None
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=_FFPROBE_TIMEOUT)
         if proc.returncode != 0:
             return None, None
 
@@ -59,6 +62,9 @@ async def _probe_file(path: Path) -> tuple[float | None, str | None]:
         return duration, codec
     except (asyncio.TimeoutError, FileNotFoundError, Exception):
         return None, None
+    finally:
+        if proc is not None:
+            await _reap(proc)
 
 
 async def _index_file(path: Path, db_path: Path, roots: list[Path] | None = None) -> None:

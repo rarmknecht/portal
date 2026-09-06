@@ -48,8 +48,20 @@ async def get_thumbnail(
     )
 
 
+async def _reap(proc: asyncio.subprocess.Process) -> None:
+    """Kill *proc* if it's still running and reap it, so a timed-out or
+    cancelled child never lingers as an orphan/zombie."""
+    if proc.returncode is None:
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+        await proc.wait()
+
+
 async def _run_ffmpeg(cmd: list[str], dest: Path) -> bytes | None:
     global _ffmpeg_missing_logged
+    proc: asyncio.subprocess.Process | None = None
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -69,6 +81,9 @@ async def _run_ffmpeg(cmd: list[str], dest: Path) -> bytes | None:
             log.error("ffmpeg not found on PATH — thumbnails unavailable")
             _ffmpeg_missing_logged = True
         dest.unlink(missing_ok=True)
+    finally:
+        if proc is not None:
+            await _reap(proc)
     return None
 
 
