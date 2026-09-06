@@ -75,12 +75,12 @@ async def reap(proc: asyncio.subprocess.Process) -> None:
             except (ProcessLookupError, PermissionError):
                 try:
                     proc.kill()
-                except ProcessLookupError:
-                    pass
+                except (ProcessLookupError, PermissionError):
+                    pass  # reap() runs in a finally; never let it mask the caller's result
         else:
             try:
                 proc.kill()
-            except ProcessLookupError:
+            except (ProcessLookupError, PermissionError):
                 pass
         transport = getattr(proc, "_transport", None)
         if transport is not None:
@@ -100,6 +100,7 @@ async def _run_ffmpeg(cmd: list[str], dest: Path) -> bytes | None:
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
             start_new_session=True,
