@@ -19,93 +19,17 @@ router = APIRouter()
 _INDEX_HTML = (Path(__file__).parent / "static" / "index.html").read_text()
 _CONFIG_PATH = Path.home() / ".portal" / "config.toml"
 
-
-def _maybe_tilde(p: Path) -> str:
-    try:
-        return "~/" + str(p.relative_to(Path.home()))
-    except ValueError:
-        return str(p)
+# The TOML (de)serialisation helpers used to live here; they moved to
+# portal/config.py (as cfg_to_dict()/_dict_to_toml()/dump()) so __main__.py
+# can persist a config without importing this UI-routes module. Re-exported
+# here so existing call sites/tests keep working unchanged.
+_maybe_tilde = cfg_mod._maybe_tilde
+_toml_str = cfg_mod._toml_str
+_dict_to_toml = cfg_mod._dict_to_toml
 
 
 def _cfg_to_dict() -> dict:
-    cfg = services.config()
-    return {
-        "agent": {
-            "media_api_bind": cfg.agent.media_api_bind,
-            "media_api_port": cfg.agent.media_api_port,
-            "web_ui_bind": cfg.agent.web_ui_bind,
-            "web_ui_port": cfg.agent.web_ui_port,
-            "api_token": cfg.agent.api_token,
-        },
-        "libraries": cfg.libraries,
-        "indexing": {
-            "mode": cfg.indexing.mode,
-            "scan_on_startup": cfg.indexing.scan_on_startup,
-        },
-        "thumbnails": {
-            "cache_dir": _maybe_tilde(cfg.thumbnails.cache_dir),
-            "max_cache_size_mb": cfg.thumbnails.max_cache_size_mb,
-            "prefer_embedded": cfg.thumbnails.prefer_embedded,
-        },
-        "logging": {
-            "log_dir": _maybe_tilde(cfg.logging.log_dir),
-            "max_size_mb": cfg.logging.max_size_mb,
-            "rotation": cfg.logging.rotation,
-        },
-    }
-
-
-def _toml_str(v: str) -> str:
-    return '"' + v.replace("\\", "\\\\").replace('"', '\\"') + '"'
-
-
-def _dict_to_toml(data: dict) -> str:
-    lines: list[str] = []
-
-    agent = data.get("agent", {})
-    lines += [
-        "[agent]",
-        f'media_api_bind = {_toml_str(str(agent.get("media_api_bind", "0.0.0.0")))}',
-        f'media_api_port = {int(agent.get("media_api_port", 7842))}',
-        f'web_ui_bind = {_toml_str(str(agent.get("web_ui_bind", "127.0.0.1")))}',
-        f'web_ui_port = {int(agent.get("web_ui_port", 5567))}',
-    ]
-    tok = str(agent.get("api_token", "")).strip()
-    if tok:
-        lines.append(f"api_token = {_toml_str(tok)}")
-    lines.append("")
-
-    libs = [p for p in data.get("libraries", []) if str(p).strip()]
-    items = ", ".join(_toml_str(str(p)) for p in libs)
-    lines += ["[libraries]", f"allowlist = [{items}]", ""]
-
-    idx = data.get("indexing", {})
-    lines += [
-        "[indexing]",
-        f'mode = {_toml_str(str(idx.get("mode", "background")))}',
-        f'scan_on_startup = {"true" if idx.get("scan_on_startup", True) else "false"}',
-        "",
-    ]
-
-    th = data.get("thumbnails", {})
-    lines += [
-        "[thumbnails]",
-        f'cache_dir = {_toml_str(str(th.get("cache_dir", "~/.portal/thumbnails")))}',
-        f'max_cache_size_mb = {int(th.get("max_cache_size_mb", 500))}',
-        f'prefer_embedded = {"true" if th.get("prefer_embedded", True) else "false"}',
-        "",
-    ]
-
-    lg = data.get("logging", {})
-    lines += [
-        "[logging]",
-        f'log_dir = {_toml_str(str(lg.get("log_dir", "~/.portal/logs")))}',
-        f'max_size_mb = {int(lg.get("max_size_mb", 150))}',
-        f'rotation = {_toml_str(str(lg.get("rotation", "size")))}',
-        "",
-    ]
-
-    return "\n".join(lines)
+    return cfg_mod.cfg_to_dict(services.config())
 
 
 @router.get("/", response_class=HTMLResponse)

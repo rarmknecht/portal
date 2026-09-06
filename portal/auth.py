@@ -1,4 +1,4 @@
-"""Token-based API authentication — no-op when api_token is unset in config."""
+"""Token-based API authentication — fails closed when api_token is unset in config."""
 
 from __future__ import annotations
 
@@ -19,7 +19,12 @@ async def verify_token(
 ) -> None:
     expected = services.config().agent.api_token
     if not expected:
-        return  # auth disabled — server runs open on the LAN
+        # An unset token is a misconfiguration, not "auth disabled" — the
+        # media API binds to 0.0.0.0 by default, so failing open here would
+        # serve every library to the whole LAN. __main__._run() generates
+        # and persists a token on first run, so this should not happen in
+        # practice; if it does, reject rather than let requests through.
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
     provided = query_token
     if not provided and header_token:

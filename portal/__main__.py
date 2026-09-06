@@ -5,7 +5,10 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import logging
+import secrets
 import sys
+from pathlib import Path
+
 import uvicorn
 from fastapi import FastAPI
 
@@ -53,6 +56,28 @@ def _require_loopback_bind(value: str) -> None:
         sys.exit(2)
 
 
+def _ensure_api_token(cfg: cfg_mod.Config, path: Path) -> bool:
+    """Generate and persist an api_token if the loaded config doesn't have one.
+
+    The media API defaults to binding 0.0.0.0 (see AgentConfig.media_api_bind)
+    because that's the point of the product — a phone on the LAN should be
+    able to reach it. That's only safe because auth.verify_token now fails
+    closed on an empty token, which in turn requires that a fresh install
+    always ends up with a real token before any server starts serving.
+
+    Mutates cfg.agent.api_token in place and writes the full config back to
+    `path` via config.write_secure() (0600/0700, atomic) so the token
+    survives restarts and is visible in the web UI. Returns True if a token
+    was generated (and the file written), False if cfg already had one (in
+    which case the file is left untouched).
+    """
+    if cfg.agent.api_token:
+        return False
+    cfg.agent.api_token = secrets.token_urlsafe(32)
+    cfg_mod.write_secure(path, cfg_mod.dump(cfg))
+    return True
+
+
 def _build_media_app() -> FastAPI:
     from fastapi import Depends
     app = FastAPI(title="Portal Media API", version="1.0")
@@ -84,6 +109,33 @@ def _build_ui_app() -> FastAPI:
 async def _run() -> None:
     cfg = cfg_mod.load()
     _require_loopback_bind(cfg.agent.web_ui_bind)
+
+    config_path = cfg_mod._DEFAULT_CONFIG_PATH
+    if _ensure_api_token(cfg, config_path):
+        log.info(
+            "No api_token was configured; generated one and saved it to %s. "
+            "View it in the web UI at http://127.0.0.1:%d/",
+            config_path,
+            cfg.agent.web_ui_port,
+        )
+
+    # Belt and braces: _ensure_api_token() above should make this
+    # unreachable, but if cfg.agent.api_token is somehow still empty while
+    # the media API is bound off-loopback, refuse to serve an unauthenticated
+    # LAN-facing API rather than silently trust that invariant.
+    try:
+        media_bind_ip = ipaddress.ip_address(cfg.agent.media_api_bind)
+        media_bind_is_loopback = media_bind_ip.is_loopback
+    except ValueError:
+        media_bind_is_loopback = cfg.agent.media_api_bind == "localhost"
+    if not media_bind_is_loopback and not cfg.agent.api_token:
+        log.error(
+            "media_api_bind=%r is not loopback and no api_token is set — "
+            "refusing to serve the media API without authentication",
+            cfg.agent.media_api_bind,
+        )
+        sys.exit(2)
+
     roots = allowlist_roots(cfg.libraries)
 
     if not roots and cfg.libraries:

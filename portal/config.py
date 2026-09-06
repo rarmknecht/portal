@@ -22,7 +22,12 @@ _DEFAULT_CONFIG_PATH = _DEFAULT_DATA_DIR / "config.toml"
 
 @dataclass
 class AgentConfig:
-    media_api_bind: str = "0.0.0.0"
+    # Intentionally LAN-facing by default — the whole point of the media API
+    # is that a phone/TV on the LAN can reach it. This is safe only because
+    # __main__._run() guarantees api_token is non-empty before serving (see
+    # _ensure_api_token) and auth.verify_token now fails closed on an empty
+    # token, so an unauthenticated client can't reach any guarded route.
+    media_api_bind: str = "0.0.0.0"  # nosec B104
     media_api_port: int = 7842
     web_ui_bind: str = "127.0.0.1"
     web_ui_port: int = 5567
@@ -169,3 +174,105 @@ def load(path: Path = _DEFAULT_CONFIG_PATH) -> Config:
         )
 
     return cfg
+
+
+def _maybe_tilde(p: Path) -> str:
+    try:
+        return "~/" + str(p.relative_to(Path.home()))
+    except ValueError:
+        return str(p)
+
+
+def cfg_to_dict(cfg: Config) -> dict:
+    """Serialise a Config to the plain-dict shape used by dump()/the UI.
+
+    Takes a Config argument rather than reaching into portal.services, so
+    this module never imports services/routes (that would be a cycle —
+    services imports config, and routes imports both).
+    """
+    return {
+        "agent": {
+            "media_api_bind": cfg.agent.media_api_bind,
+            "media_api_port": cfg.agent.media_api_port,
+            "web_ui_bind": cfg.agent.web_ui_bind,
+            "web_ui_port": cfg.agent.web_ui_port,
+            "api_token": cfg.agent.api_token,
+        },
+        "libraries": cfg.libraries,
+        "indexing": {
+            "mode": cfg.indexing.mode,
+            "scan_on_startup": cfg.indexing.scan_on_startup,
+        },
+        "thumbnails": {
+            "cache_dir": _maybe_tilde(cfg.thumbnails.cache_dir),
+            "max_cache_size_mb": cfg.thumbnails.max_cache_size_mb,
+            "prefer_embedded": cfg.thumbnails.prefer_embedded,
+        },
+        "logging": {
+            "log_dir": _maybe_tilde(cfg.logging.log_dir),
+            "max_size_mb": cfg.logging.max_size_mb,
+            "rotation": cfg.logging.rotation,
+        },
+    }
+
+
+def _toml_str(v: str) -> str:
+    return '"' + v.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _dict_to_toml(data: dict) -> str:
+    lines: list[str] = []
+
+    agent = data.get("agent", {})
+    lines += [
+        "[agent]",
+        # Same LAN-facing-by-default rationale as AgentConfig.media_api_bind
+        # above — this is only the fallback used when a caller's dict omits
+        # the key entirely; a loaded/edited config always carries an
+        # explicit value.
+        f'media_api_bind = {_toml_str(str(agent.get("media_api_bind", "0.0.0.0")))}',  # nosec B104
+        f'media_api_port = {int(agent.get("media_api_port", 7842))}',
+        f'web_ui_bind = {_toml_str(str(agent.get("web_ui_bind", "127.0.0.1")))}',
+        f'web_ui_port = {int(agent.get("web_ui_port", 5567))}',
+    ]
+    tok = str(agent.get("api_token", "")).strip()
+    if tok:
+        lines.append(f"api_token = {_toml_str(tok)}")
+    lines.append("")
+
+    libs = [p for p in data.get("libraries", []) if str(p).strip()]
+    items = ", ".join(_toml_str(str(p)) for p in libs)
+    lines += ["[libraries]", f"allowlist = [{items}]", ""]
+
+    idx = data.get("indexing", {})
+    lines += [
+        "[indexing]",
+        f'mode = {_toml_str(str(idx.get("mode", "background")))}',
+        f'scan_on_startup = {"true" if idx.get("scan_on_startup", True) else "false"}',
+        "",
+    ]
+
+    th = data.get("thumbnails", {})
+    lines += [
+        "[thumbnails]",
+        f'cache_dir = {_toml_str(str(th.get("cache_dir", "~/.portal/thumbnails")))}',
+        f'max_cache_size_mb = {int(th.get("max_cache_size_mb", 500))}',
+        f'prefer_embedded = {"true" if th.get("prefer_embedded", True) else "false"}',
+        "",
+    ]
+
+    lg = data.get("logging", {})
+    lines += [
+        "[logging]",
+        f'log_dir = {_toml_str(str(lg.get("log_dir", "~/.portal/logs")))}',
+        f'max_size_mb = {int(lg.get("max_size_mb", 150))}',
+        f'rotation = {_toml_str(str(lg.get("rotation", "size")))}',
+        "",
+    ]
+
+    return "\n".join(lines)
+
+
+def dump(cfg: Config) -> str:
+    """Serialise a full Config back to TOML text (for write_secure())."""
+    return _dict_to_toml(cfg_to_dict(cfg))
