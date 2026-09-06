@@ -8,7 +8,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from portal import indexer, services
+from portal import config as cfg_mod, indexer, services
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -179,6 +179,5 @@ async def save_config(request: Request) -> JSONResponse:
         tomllib.loads(toml_content)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Config validation failed: {exc}")
-    _CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    _CONFIG_PATH.write_text(toml_content, encoding="utf-8")
+    cfg_mod.write_secure(_CONFIG_PATH, toml_content)
     return JSONResponse({"ok": True})
