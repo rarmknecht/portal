@@ -165,6 +165,14 @@ async def get_config() -> JSONResponse:
 
 @router.post("/api/config")
 async def save_config(request: Request) -> JSONResponse:
+    # Require an explicit JSON content type so a cross-site
+    # enctype="text/plain" form post — the classic no-CORS-preflight CSRF
+    # trick — can't reach request.json() even if it slipped past the
+    # LoopbackOnlyMiddleware Origin/Host checks. (See portal/ui/security.py
+    # for the rest of the loopback-only guard.)
+    content_type = (request.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
+    if content_type != "application/json":
+        raise HTTPException(status_code=415, detail="Content-Type must be application/json")
     body = await request.json()
     toml_content = _dict_to_toml(body)
     try:

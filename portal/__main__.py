@@ -12,6 +12,7 @@ from portal import auth, config as cfg_mod, db, discovery, indexer, services, th
 from portal.allowlist import allowlist_roots
 from portal.api import health, libraries, browse, metadata, thumbnail, stream, search
 from portal.ui import routes as ui_routes
+from portal.ui.security import LoopbackOnlyMiddleware
 
 logging.basicConfig(
     level=logging.INFO,
@@ -37,6 +38,13 @@ def _build_media_app() -> FastAPI:
 
 def _build_ui_app() -> FastAPI:
     app = FastAPI(title="Portal Web UI", version="1.0")
+    # The UI has no auth of its own (see portal/ui/security.py) — it relies
+    # entirely on being loopback-only. This middleware enforces that on
+    # every request, since app.include_router() alone applies no such check.
+    app.add_middleware(
+        LoopbackOnlyMiddleware,
+        get_port=lambda: services.config().agent.web_ui_port,
+    )
     app.include_router(ui_routes.router)
     return app
 

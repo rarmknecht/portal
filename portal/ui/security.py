@@ -1,0 +1,123 @@
+"""Loopback-only guard for the Portal web UI.
+
+The web UI (``portal/ui/routes.py``) has no authentication at all — no
+login, no session, no CSRF token — because it is meant to be reachable
+only from the machine it runs on, bound to 127.0.0.1. That trust model
+breaks in two ways an ordinary web page can trigger without any
+credentials:
+
+  * DNS rebinding: an attacker-controlled hostname can be resolved to
+    127.0.0.1 *after* the browser's same-origin checks for that hostname
+    have already passed, letting page JS talk to our loopback server as
+    if it were same-origin.
+  * Cross-site requests: any page on any origin can point a <form> (with
+    enctype="text/plain") or a no-CORS-preflight ``fetch`` at
+    ``http://127.0.0.1:<port>/...`` and the browser sends it anyway,
+    because loopback services aren't covered by CORS preflight rules.
+
+Because this is a single-user tool with nothing to log in to, we don't
+need sessions or CSRF tokens — we only need to prove the request really
+originated from a page served by *this* origin. That's enough for a
+loopback-bound service and is enforced here at the ASGI layer for every
+request to the UI app:
+
+  1. ``Host`` must name the loopback address/port this server is actually
+     listening on. A rebound hostname will never satisfy this, so DNS
+     rebinding is defeated regardless of what IP it resolves to.
+  2. For state-changing methods (POST/PUT/PATCH/DELETE), ``Origin`` (or,
+     when a browser omits it, ``Sec-Fetch-Site``) must show the request
+     came from our own origin. This defeats cross-site form/fetch
+     submissions. Modern browsers always send one of these two headers on
+     cross-origin requests, so requiring one (and rejecting when both are
+     absent) does not weaken the check for real browser traffic — it only
+     affects tools like curl, which can simply add an ``Origin`` header.
+
+A third check — requiring ``Content-Type: application/json`` on
+``POST /api/config`` — lives next to that route in ``routes.py`` since
+it's specific to that one endpoint (it closes the "text/plain form post"
+trick some CSRF PoCs use to avoid ever setting a real Origin/Content-Type).
+"""
+
+from __future__ import annotations
+
+from typing import Callable
+
+from starlette.requests import Request
+from starlette.responses import PlainTextResponse
+from starlette.types import ASGIApp, Receive, Scope, Send
+
+_STATE_CHANGING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+
+def _valid_hosts(port: int) -> set[str]:
+    """Host header values that legitimately name this loopback server."""
+    hosts = {f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}"}
+    if port == 80:
+        # Browsers omit the port from Host when it's the scheme default.
+        hosts |= {"127.0.0.1", "localhost", "[::1]", "::1"}
+    return hosts
+
+
+def _valid_origins(port: int) -> set[str]:
+    """Origin header values that legitimately point at this loopback server."""
+    origins = {
+        f"http://127.0.0.1:{port}",
+        f"http://localhost:{port}",
+        f"http://[::1]:{port}",
+    }
+    if port == 80:
+        origins |= {"http://127.0.0.1", "http://localhost", "http://[::1]"}
+    return origins
+
+
+class LoopbackOnlyMiddleware:
+    """ASGI middleware that rejects any request not addressed to, and not
+    originating from, this loopback-bound UI server.
+
+    ``get_port`` is a callable (rather than a fixed int) because the port
+    comes from config that may not be loaded yet at the time the FastAPI
+    app object is constructed — it's resolved fresh on every request.
+    """
+
+    def __init__(self, app: ASGIApp, get_port: Callable[[], int]) -> None:
+        self.app = app
+        self._get_port = get_port
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        request = Request(scope, receive=receive)
+        rejection = self._check(request, self._get_port())
+        if rejection is not None:
+            status_code, detail = rejection
+            response = PlainTextResponse(detail, status_code=status_code)
+            await response(scope, receive, send)
+            return
+
+        await self.app(scope, receive, send)
+
+    def _check(self, request: Request, port: int) -> tuple[int, str] | None:
+        # 1. Host header must name this loopback server — blocks DNS rebinding.
+        host = (request.headers.get("host") or "").strip().lower()
+        if host not in _valid_hosts(port):
+            return 400, "Invalid Host header"
+
+        # 2. For state-changing methods, require same-origin evidence —
+        #    blocks cross-site form/fetch submissions.
+        if request.method.upper() in _STATE_CHANGING_METHODS:
+            origin = request.headers.get("origin")
+            if origin is not None:
+                if origin.strip().lower() not in _valid_origins(port):
+                    return 403, "Cross-origin request rejected"
+            else:
+                # No Origin header — modern browsers still send Sec-Fetch-Site
+                # on every request. Its absence means this isn't a browser
+                # navigation/fetch we can vouch for, so reject rather than
+                # trust it.
+                sec_fetch_site = request.headers.get("sec-fetch-site")
+                if sec_fetch_site not in ("same-origin", "none"):
+                    return 403, "Cross-origin request rejected"
+
+        return None
