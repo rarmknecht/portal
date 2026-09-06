@@ -2,9 +2,25 @@
 
 The web UI (``portal/ui/routes.py``) has no authentication at all — no
 login, no session, no CSRF token — because it is meant to be reachable
-only from the machine it runs on, bound to 127.0.0.1. That trust model
-breaks in two ways an ordinary web page can trigger without any
-credentials:
+only from the machine it runs on, bound to 127.0.0.1. It also exposes
+``GET /api/config`` (which returns the API token) and ``POST /api/config``
+(which rewrites the config, including ``web_ui_bind`` itself), so trusting
+the wrong client here is a real credential and takeover risk, not just a
+theoretical one.
+
+The primary defense, enforced first on every request, is the actual
+transport-level peer: the ASGI ``scope["client"]`` tuple. Headers are
+supplied by the client and can be forged by anything that isn't a browser
+(``curl -H "Host: 127.0.0.1:5567"`` costs nothing), so they cannot be the
+basis of a trust decision by themselves — only the peer address the
+server's own transport observed can't be spoofed by the request. We
+require that peer to be loopback (127.0.0.0/8, ::1, or an IPv4-mapped
+loopback address) or, for Unix domain sockets (where there is no peer
+*address* at all), that the transport itself is a UDS rather than TCP.
+
+Once the peer check passes, we still run two header checks as
+defense-in-depth against anti-rebinding/CSRF tricks an ordinary browser on
+the *same* loopback machine could otherwise pull off:
 
   * DNS rebinding: an attacker-controlled hostname can be resolved to
     127.0.0.1 *after* the browser's same-origin checks for that hostname
@@ -19,7 +35,7 @@ Because this is a single-user tool with nothing to log in to, we don't
 need sessions or CSRF tokens — we only need to prove the request really
 originated from a page served by *this* origin. That's enough for a
 loopback-bound service and is enforced here at the ASGI layer for every
-request to the UI app:
+request to the UI app, after the peer check:
 
   1. ``Host`` must name the loopback address/port this server is actually
      listening on. A rebound hostname will never satisfy this, so DNS
@@ -40,6 +56,7 @@ trick some CSRF PoCs use to avoid ever setting a real Origin/Content-Type).
 
 from __future__ import annotations
 
+import ipaddress
 from typing import Callable
 
 from starlette.requests import Request
@@ -56,6 +73,39 @@ def _valid_hosts(port: int) -> set[str]:
         # Browsers omit the port from Host when it's the scheme default.
         hosts |= {"127.0.0.1", "localhost", "[::1]", "::1"}
     return hosts
+
+
+def _is_loopback_peer(scope: Scope) -> bool:
+    """Whether the ASGI transport's actual peer is loopback.
+
+    This is the primary trust check: unlike headers, ``scope["client"]``
+    and ``scope["server"]`` are set by the server's own transport (uvicorn)
+    from the real socket, not supplied by the client, so they can't be
+    forged by a request.
+    """
+    client = scope.get("client")
+
+    if client is not None:
+        host = client[0]
+        try:
+            ip = ipaddress.ip_address(host)
+        except ValueError:
+            return False
+        if ip.is_loopback:
+            return True
+        mapped = getattr(ip, "ipv4_mapped", None)
+        return mapped is not None and mapped.is_loopback
+
+    # No peer address at all — this is how uvicorn reports Unix domain
+    # socket connections (there's no host:port to give). Accept only when
+    # the server side is also UDS-shaped (None, or a filesystem path
+    # rather than a TCP host), so an unknown/unreported TCP peer is still
+    # rejected rather than trusted by default.
+    server = scope.get("server")
+    if server is None:
+        return True
+    server_host = server[0] if server else None
+    return isinstance(server_host, str) and "/" in server_host
 
 
 def _valid_origins(port: int) -> set[str]:
@@ -99,6 +149,13 @@ class LoopbackOnlyMiddleware:
         await self.app(scope, receive, send)
 
     def _check(self, request: Request, port: int) -> tuple[int, str] | None:
+        # 0. The actual transport peer must be loopback — this is the real
+        #    trust boundary. Headers below are client-supplied and can be
+        #    forged by any non-browser client (e.g. curl), so they only
+        #    matter once we already know the connection itself is local.
+        if not _is_loopback_peer(request.scope):
+            return 403, "UI is loopback-only"
+
         # 1. Host header must name this loopback server — blocks DNS rebinding.
         host = (request.headers.get("host") or "").strip().lower()
         if host not in _valid_hosts(port):

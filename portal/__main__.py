@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import logging
 import sys
 import uvicorn
@@ -19,6 +20,37 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
 )
 log = logging.getLogger("portal")
+
+
+def _require_loopback_bind(value: str) -> None:
+    """Refuse to start the web UI on anything but a loopback address.
+
+    ``LoopbackOnlyMiddleware`` (portal/ui/security.py) trusts the UI
+    server's own peer address as its primary check — that only means
+    anything if the server is actually bound to loopback. The UI has no
+    authentication and exposes the API token via ``GET /api/config``, so a
+    non-loopback ``web_ui_bind`` (e.g. from a hand-edited config or the
+    settings page) would hand out unauthenticated access to any remote
+    client. Bail out before any server starts rather than serve that.
+    """
+    if value == "localhost":
+        return
+    try:
+        ip = ipaddress.ip_address(value)
+    except ValueError:
+        log.error(
+            "web_ui_bind=%r is not a valid loopback address — "
+            "set web_ui_bind to 127.0.0.1 in ~/.portal/config.toml",
+            value,
+        )
+        sys.exit(2)
+    if not ip.is_loopback:
+        log.error(
+            "web_ui_bind=%r is not a loopback address — "
+            "set web_ui_bind to 127.0.0.1 in ~/.portal/config.toml",
+            value,
+        )
+        sys.exit(2)
 
 
 def _build_media_app() -> FastAPI:
@@ -51,6 +83,7 @@ def _build_ui_app() -> FastAPI:
 
 async def _run() -> None:
     cfg = cfg_mod.load()
+    _require_loopback_bind(cfg.agent.web_ui_bind)
     roots = allowlist_roots(cfg.libraries)
 
     if not roots and cfg.libraries:
@@ -58,7 +91,8 @@ async def _run() -> None:
 
     services.init(cfg, roots)
 
-    for d in (cfg.data_dir, cfg.thumbnails.cache_dir, cfg.logging.log_dir):
+    cfg.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    for d in (cfg.thumbnails.cache_dir, cfg.logging.log_dir):
         d.mkdir(parents=True, exist_ok=True)
     thumbnailer.ensure_cache_dir(cfg.thumbnails.cache_dir)
 
