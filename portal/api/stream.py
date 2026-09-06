@@ -53,19 +53,55 @@ def _range_response(path: Path, range_header: str, file_size: int, media_type: s
     )
 
 
+def _unsatisfiable(file_size: int) -> HTTPException:
+    return HTTPException(
+        status_code=416,
+        headers={"Content-Range": f"bytes */{file_size}"},
+    )
+
+
 def _parse_range(header: str, file_size: int) -> tuple[int, int]:
+    """Parse a single-range ``Range`` header per RFC 9110 section 14.1.2.
+
+    Raises HTTPException(416) for anything unsatisfiable or unparseable;
+    multi-range requests (e.g. ``bytes=0-1,5-6``) are treated as
+    unsatisfiable since this server only ever serves a single range.
+    """
+    if file_size == 0:
+        raise _unsatisfiable(file_size)
+
     try:
-        unit, _, ranges = header.partition("=")
-        if unit.strip() != "bytes":
-            raise ValueError
-        raw_start, _, raw_end = ranges.partition("-")
-        start = int(raw_start) if raw_start else file_size - int(raw_end)
-        end = int(raw_end) if raw_end else file_size - 1
-        start = max(0, start)
-        end = min(end, file_size - 1)
-        return start, end
-    except Exception:
-        return 0, file_size - 1
+        unit, sep, ranges = header.partition("=")
+        if sep != "=" or unit.strip() != "bytes":
+            raise ValueError("unsupported unit")
+        if "," in ranges:
+            raise ValueError("multiple ranges not supported")
+
+        raw_start, dash, raw_end = ranges.partition("-")
+        if not dash:
+            raise ValueError("missing '-' in range")
+        raw_start = raw_start.strip()
+        raw_end = raw_end.strip()
+        if raw_start == "" and raw_end == "":
+            raise ValueError("empty range")
+
+        if raw_start == "":
+            # Suffix range: bytes=-N -> last N bytes. bytes=-0 is unsatisfiable.
+            suffix_len = int(raw_end)
+            if suffix_len <= 0:
+                raise ValueError("non-positive suffix length")
+            start = max(0, file_size - suffix_len)
+            end = file_size - 1
+        else:
+            start = int(raw_start)
+            end = file_size - 1 if raw_end == "" else min(int(raw_end), file_size - 1)
+    except Exception as exc:
+        raise _unsatisfiable(file_size) from exc
+
+    if start < 0 or start >= file_size or start > end:
+        raise _unsatisfiable(file_size)
+
+    return start, end
 
 
 async def _iter_file(path: Path, start: int, stop: int):
