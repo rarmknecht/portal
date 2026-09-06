@@ -17,7 +17,7 @@ else:
 
 router = APIRouter()
 _INDEX_HTML = (Path(__file__).parent / "static" / "index.html").read_text()
-_CONFIG_PATH = Path.home() / ".portal" / "config.toml"
+_CONFIG_PATH = cfg_mod.DEFAULT_CONFIG_PATH
 
 # The TOML (de)serialisation helpers used to live here; they moved to
 # portal/config.py (as cfg_to_dict()/_dict_to_toml()/dump()) so __main__.py
@@ -98,6 +98,22 @@ async def save_config(request: Request) -> JSONResponse:
     if content_type != "application/json":
         raise HTTPException(status_code=415, detail="Content-Type must be application/json")
     body = await request.json()
+
+    # Reject a non-loopback web_ui_bind before it ever reaches disk: without
+    # this, saving e.g. "0.0.0.0" from the settings page writes a config
+    # that __main__._require_loopback_bind() then refuses to start with,
+    # putting the service into a 5-second systemd restart loop on next
+    # start. Same predicate __main__.py uses to make that startup decision.
+    web_ui_bind = str((body.get("agent") or {}).get("web_ui_bind", "127.0.0.1"))
+    if not cfg_mod.is_loopback_bind(web_ui_bind):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "agent.web_ui_bind must be a loopback address "
+                f"(127.0.0.1, ::1, or localhost) — got {web_ui_bind!r}"
+            ),
+        )
+
     toml_content = _dict_to_toml(body)
     try:
         tomllib.loads(toml_content)

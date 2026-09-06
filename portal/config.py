@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import os
+import stat
 import sys
 import tempfile
 from dataclasses import dataclass, field
@@ -18,6 +20,12 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_DATA_DIR = Path.home() / ".portal"
 _DEFAULT_CONFIG_PATH = _DEFAULT_DATA_DIR / "config.toml"
+# Public name for the above — __main__.py and portal/ui/routes.py both need
+# the default config path and previously each had its own copy (__main__.py
+# reached into the underscore-prefixed "private" name, routes.py hardcoded
+# Path.home() / ".portal" / "config.toml" independently). One definition,
+# two names: the underscore alias stays for existing internal call sites.
+DEFAULT_CONFIG_PATH = _DEFAULT_CONFIG_PATH
 
 
 @dataclass
@@ -107,23 +115,79 @@ def secure_existing(path: Path) -> None:
     files/directories owned by the current user, and never raises —
     callers should still guard with try/except for anything unexpected
     from the filesystem (e.g. a read-only mount).
+
+    Uses os.lstat (never follows symlinks) and does nothing — just a DEBUG
+    log — if the config file or its parent directory is itself a symlink,
+    so a planted link (e.g. ~/.portal/config.toml -> /etc/shadow, or
+    ~/.portal itself replaced with a symlink) can never redirect a chmod
+    onto an attacker-chosen target. Separately, the parent directory is
+    never chmod'd if it is exactly Path.home() — a misconfigured data_dir
+    pointing straight at $HOME must not have its permissions rewritten.
     """
     changed = False
     parent = path.parent
-    if parent.exists() and parent.stat().st_uid == os.getuid():
-        mode = parent.stat().st_mode & 0o777
-        if mode != 0o700:
-            os.chmod(parent, 0o700)
-            changed = True
 
-    if path.exists() and path.stat().st_uid == os.getuid():
-        mode = path.stat().st_mode & 0o777
+    try:
+        parent_lst = os.lstat(parent)
+    except OSError:
+        parent_lst = None
+
+    try:
+        path_lst = os.lstat(path)
+    except OSError:
+        path_lst = None
+
+    parent_is_symlink = parent_lst is not None and stat.S_ISLNK(parent_lst.st_mode)
+    path_is_symlink = path_lst is not None and stat.S_ISLNK(path_lst.st_mode)
+
+    if parent_is_symlink or path_is_symlink:
+        logger.debug(
+            "Skipping permission tightening for %s: %s is a symlink",
+            path,
+            parent if parent_is_symlink else path,
+        )
+        return
+
+    if parent_lst is not None and parent_lst.st_uid == os.getuid():
+        if parent == Path.home():
+            logger.debug(
+                "Skipping chmod of %s: it is the home directory", parent
+            )
+        else:
+            mode = parent_lst.st_mode & 0o777
+            if mode != 0o700:
+                os.chmod(parent, 0o700)
+                changed = True
+
+    if path_lst is not None and path_lst.st_uid == os.getuid():
+        mode = path_lst.st_mode & 0o777
         if mode != 0o600:
             os.chmod(path, 0o600)
             changed = True
 
     if changed:
         logger.info("Tightened permissions on %s to owner-only (0600/0700)", path)
+
+
+def is_loopback_bind(value: str) -> bool:
+    """Whether `value` is a bind address that only accepts local connections.
+
+    True for the literal string "localhost" or any address for which
+    ``ipaddress.ip_address(value).is_loopback`` is true (127.0.0.0/8, ::1).
+    Never raises: an unparsable value — "", "garbage", "127.0.0.1:5567"
+    (a host:port pair, not a bare address), a hostname, "0.0.0.0", or any
+    other non-loopback address — simply returns False.
+
+    Shared by __main__._require_loopback_bind() (refuses to start the web
+    UI server on a non-loopback bind) and the POST /api/config validation
+    in portal/ui/routes.py (refuses to save one), so the two can't drift.
+    """
+    if value == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(value).is_loopback
+    except ValueError:
+        return False
 
 
 def load(path: Path = _DEFAULT_CONFIG_PATH) -> Config:

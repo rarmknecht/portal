@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import ipaddress
 import logging
 import secrets
 import sys
@@ -36,18 +35,7 @@ def _require_loopback_bind(value: str) -> None:
     settings page) would hand out unauthenticated access to any remote
     client. Bail out before any server starts rather than serve that.
     """
-    if value == "localhost":
-        return
-    try:
-        ip = ipaddress.ip_address(value)
-    except ValueError:
-        log.error(
-            "web_ui_bind=%r is not a valid loopback address — "
-            "set web_ui_bind to 127.0.0.1 in ~/.portal/config.toml",
-            value,
-        )
-        sys.exit(2)
-    if not ip.is_loopback:
+    if not cfg_mod.is_loopback_bind(value):
         log.error(
             "web_ui_bind=%r is not a loopback address — "
             "set web_ui_bind to 127.0.0.1 in ~/.portal/config.toml",
@@ -110,7 +98,7 @@ async def _run() -> None:
     cfg = cfg_mod.load()
     _require_loopback_bind(cfg.agent.web_ui_bind)
 
-    config_path = cfg_mod._DEFAULT_CONFIG_PATH
+    config_path = cfg_mod.DEFAULT_CONFIG_PATH
     if _ensure_api_token(cfg, config_path):
         log.info(
             "No api_token was configured; generated one and saved it to %s. "
@@ -123,12 +111,7 @@ async def _run() -> None:
     # unreachable, but if cfg.agent.api_token is somehow still empty while
     # the media API is bound off-loopback, refuse to serve an unauthenticated
     # LAN-facing API rather than silently trust that invariant.
-    try:
-        media_bind_ip = ipaddress.ip_address(cfg.agent.media_api_bind)
-        media_bind_is_loopback = media_bind_ip.is_loopback
-    except ValueError:
-        media_bind_is_loopback = cfg.agent.media_api_bind == "localhost"
-    if not media_bind_is_loopback and not cfg.agent.api_token:
+    if not cfg_mod.is_loopback_bind(cfg.agent.media_api_bind) and not cfg.agent.api_token:
         log.error(
             "media_api_bind=%r is not loopback and no api_token is set — "
             "refusing to serve the media API without authentication",
@@ -166,6 +149,11 @@ async def _run() -> None:
         host=cfg.agent.web_ui_bind,
         port=cfg.agent.web_ui_port,
         log_level="warning",
+        # LoopbackOnlyMiddleware's peer check must see the real socket peer
+        # (scope["client"]) — uvicorn's proxy_headers support (on by default)
+        # would let a client-supplied X-Forwarded-For rewrite that address,
+        # letting a remote caller impersonate a loopback peer.
+        proxy_headers=False,
     )
 
     media_server = uvicorn.Server(media_cfg)
