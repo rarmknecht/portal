@@ -14,7 +14,8 @@ _ffmpeg_missing_logged = False
 
 
 def _cache_key(media_path: Path, size: int) -> str:
-    h = hashlib.sha1(str(media_path).encode()).hexdigest()
+    # SHA-1 here only names a cache file, not a security control.
+    h = hashlib.sha1(str(media_path).encode(), usedforsecurity=False).hexdigest()
     return f"{h}_{size}.jpg"
 
 
