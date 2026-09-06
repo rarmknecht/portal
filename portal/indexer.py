@@ -12,6 +12,7 @@ from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 
 from portal import db
+from portal.allowlist import within_any
 from portal.media_types import media_type as _media_type
 
 log = logging.getLogger(__name__)
@@ -60,21 +61,41 @@ async def _probe_file(path: Path) -> tuple[float | None, str | None]:
         return None, None
 
 
-async def _index_file(path: Path, db_path: Path) -> None:
-    media_type = _media_type(path)
+async def _index_file(path: Path, db_path: Path, roots: list[Path] | None = None) -> None:
+    """Index *path*. Always indexes under its resolved (symlink-free) real
+    path, so the DB key matches what path_registry tokens point to. When
+    *roots* is given, the resolved target is also required to sit inside one
+    of them — a symlink planted in a watched/scanned folder that points
+    outside the library must never be probed or stored."""
+    try:
+        real = path.resolve()
+    except OSError:
+        return
+
+    if roots is not None and not within_any(real, [r.resolve() for r in roots]):
+        log.warning("Refusing to index %s: resolved target %s is outside the allowlisted roots", path, real)
+        return
+
+    if not real.exists():
+        return
+
+    media_type = _media_type(real)
     if media_type is None:
         return
 
-    stat = path.stat()
+    try:
+        stat = real.stat()
+    except OSError:
+        return
 
     # Skip if already indexed with the same mtime (file unchanged)
-    existing = await db.get(db_path, str(path))
+    existing = await db.get(db_path, str(real))
     if existing is not None and existing.mtime == stat.st_mtime:
         return
 
-    duration, codec = await _probe_file(path)
+    duration, codec = await _probe_file(real)
     record = db.MediaRecord(
-        path=str(path),
+        path=str(real),
         media_type=media_type,
         size=stat.st_size,
         duration=duration,
@@ -111,12 +132,29 @@ async def full_scan(roots: list[Path], db_path: Path) -> None:
     reporter = asyncio.create_task(_reporter())
     try:
         def _collect() -> list[Path]:
-            return [
-                Path(dirpath) / fname
-                for root in roots
-                for dirpath, _, filenames in os.walk(root)
-                for fname in filenames
-            ]
+            # os.walk(followlinks=False) still yields symlinked *files* found
+            # directly inside a walked directory (followlinks only controls
+            # whether it descends into symlinked subdirectories), so resolve
+            # each candidate and drop any whose real target escapes the
+            # allowlisted roots before it's ever probed or indexed.
+            resolved_roots = [r.resolve() for r in roots]
+            seen: set[Path] = set()
+            collected: list[Path] = []
+            for root in roots:
+                for dirpath, _, filenames in os.walk(root):
+                    for fname in filenames:
+                        candidate = Path(dirpath) / fname
+                        try:
+                            real = candidate.resolve()
+                        except OSError:
+                            continue
+                        if not within_any(real, resolved_roots):
+                            continue
+                        if real in seen:
+                            continue
+                        seen.add(real)
+                        collected.append(real)
+            return collected
 
         all_files = await asyncio.to_thread(_collect)
         _progress["total"] = len(all_files)
@@ -126,7 +164,7 @@ async def full_scan(roots: list[Path], db_path: Path) -> None:
 
         async def _bounded(path: Path) -> None:
             async with sem:
-                await _index_file(path, db_path)
+                await _index_file(path, db_path, roots)
             _progress["done"] += 1
 
         if all_files:
@@ -157,7 +195,7 @@ class _PortalEventHandler(FileSystemEventHandler):
             self._loop.call_soon_threadsafe(self._queue.put_nowait, ("deleted", event.src_path))
 
 
-async def _process_events(queue: asyncio.Queue, db_path: Path) -> None:
+async def _process_events(queue: asyncio.Queue, db_path: Path, roots: list[Path]) -> None:
     # Debounce: track in-flight paths to skip duplicate inotify events (content + metadata writes)
     in_flight: set[str] = set()
     sem = asyncio.Semaphore(_WATCHER_CONCURRENCY)
@@ -165,7 +203,7 @@ async def _process_events(queue: asyncio.Queue, db_path: Path) -> None:
     async def _handle(path_str: str) -> None:
         async with sem:
             try:
-                await _index_file(Path(path_str), db_path)
+                await _index_file(Path(path_str), db_path, roots)
             finally:
                 in_flight.discard(path_str)
 
@@ -191,4 +229,4 @@ async def start_watcher(roots: list[Path], db_path: Path) -> None:
     observer.start()
     log.info("Filesystem watcher started for %d roots", len(roots))
 
-    asyncio.create_task(_process_events(queue, db_path))
+    asyncio.create_task(_process_events(queue, db_path, roots))
