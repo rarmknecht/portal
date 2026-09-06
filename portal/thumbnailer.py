@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import os
+import signal
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -52,21 +54,34 @@ async def reap(proc: asyncio.subprocess.Process) -> None:
     """Kill *proc* if it's still running and reap it, so a timed-out or
     cancelled child never lingers as an orphan/zombie.
 
-    With stdout/stderr=PIPE, asyncio's subprocess transport only resolves
-    proc.wait() once its pipe transports have disconnected. If the child is
-    a forking shell wrapper (some distro/flatpak/nix ffprobe shims are `sh`
-    scripts) rather than exec'ing directly, killing it leaves an orphaned
-    grandchild holding the pipe's write end open — proc.wait() then blocks
-    for that grandchild's entire remaining lifetime. Close the pipe
-    transports ourselves right after kill() so wait() isn't held hostage,
-    and bound the wait as a belt-and-braces guard in case that isn't
-    enough.
+    The process is spawned with start_new_session=True, making it the
+    leader of its own process group (pid == pgid), so killing the whole
+    group with os.killpg also takes out any children it forked itself
+    (some distro/flatpak/nix ffprobe/ffmpeg shims are `sh` wrappers that
+    fork a real grandchild instead of exec'ing into it) — plain proc.kill()
+    only signals the direct child and leaves such a grandchild orphaned and
+    running. Fall back to proc.kill() if the group kill can't be done.
+
+    With stdout/stderr=PIPE, asyncio's subprocess transport also only
+    resolves proc.wait() once its pipe transports have disconnected, and an
+    orphaned grandchild inheriting the pipe's write end would otherwise
+    hold that open — so close the pipe transports ourselves right after
+    killing, and bound the final wait as a belt-and-braces guard.
     """
     if proc.returncode is None:
-        try:
-            proc.kill()
-        except ProcessLookupError:
-            pass
+        if proc.pid is not None:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+        else:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
         transport = getattr(proc, "_transport", None)
         if transport is not None:
             for fd in (1, 2):
@@ -79,9 +94,6 @@ async def reap(proc: asyncio.subprocess.Process) -> None:
             log.warning("Timed out waiting to reap killed process pid=%s", getattr(proc, "pid", "?"))
 
 
-_reap = reap  # backward-compat alias; internal callers use reap() above
-
-
 async def _run_ffmpeg(cmd: list[str], dest: Path) -> bytes | None:
     global _ffmpeg_missing_logged
     proc: asyncio.subprocess.Process | None = None
@@ -90,6 +102,7 @@ async def _run_ffmpeg(cmd: list[str], dest: Path) -> bytes | None:
             *cmd,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
+            start_new_session=True,
         )
         await asyncio.wait_for(proc.wait(), timeout=_FFMPEG_TIMEOUT)
         if proc.returncode == 0:

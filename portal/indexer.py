@@ -16,8 +16,6 @@ from portal.allowlist import within_any
 from portal.media_types import media_type as _media_type
 from portal.thumbnailer import reap
 
-_reap = reap  # backward-compat alias for external diagnostics; internal code calls reap() below
-
 log = logging.getLogger(__name__)
 
 _SCAN_CONCURRENCY = 64   # max concurrent ffprobe OS subprocesses during startup scan (spread across cores by OS)
@@ -52,6 +50,7 @@ async def _probe_file(path: Path) -> tuple[float | None, str | None]:
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
+            start_new_session=True,
         )
         stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=_FFPROBE_TIMEOUT)
         if proc.returncode != 0:
