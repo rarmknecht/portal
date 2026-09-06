@@ -114,6 +114,14 @@ async def save_config(request: Request) -> JSONResponse:
             ),
         )
 
+    # Reject clearing the token from the UI: an empty/blank api_token is
+    # omitted entirely by _dict_to_toml(), and the next restart's
+    # _ensure_api_token() would then silently mint a brand-new one,
+    # breaking any already-paired client that has the old token baked in.
+    api_token = str((body.get("agent") or {}).get("api_token", "")).strip()
+    if not api_token:
+        raise HTTPException(status_code=400, detail="api_token is required")
+
     toml_content = _dict_to_toml(body)
     try:
         tomllib.loads(toml_content)

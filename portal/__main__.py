@@ -58,8 +58,22 @@ def _ensure_api_token(cfg: cfg_mod.Config, path: Path) -> bool:
     survives restarts and is visible in the web UI. Returns True if a token
     was generated (and the file written), False if cfg already had one (in
     which case the file is left untouched).
+
+    If cfg already had a token but it's shorter than a generated one
+    (secrets.token_urlsafe(32) is 43 chars), logs a WARNING — never the
+    token itself — since a LAN-facing API with no rate limiting is only as
+    safe as the token is hard to guess. The config is not rewritten in
+    that case; the fix is for the operator to clear it and restart.
     """
     if cfg.agent.api_token:
+        if len(cfg.agent.api_token) < 32:
+            log.warning(
+                "api_token is only %d characters; a LAN-facing API with no "
+                "rate limiting should use a long random token — clear "
+                "api_token in %s and restart to generate one",
+                len(cfg.agent.api_token),
+                path,
+            )
         return False
     cfg.agent.api_token = secrets.token_urlsafe(32)
     cfg_mod.write_secure(path, cfg_mod.dump(cfg))
