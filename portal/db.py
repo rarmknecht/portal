@@ -74,16 +74,25 @@ async def get(db_path: Path, path: str) -> MediaRecord | None:
     return MediaRecord(path=row[0], media_type=row[1], size=row[2], duration=row[3], codec=row[4], mtime=row[5])
 
 
+def _like_escape(s: str) -> str:
+    """Escape LIKE metacharacters (\\, %, _) so *s* is matched literally."""
+    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 async def search(db_path: Path, library_root: str, query: str, limit: int = 200) -> list[MediaRecord]:
-    pattern = f"%{query}%"
+    # Roots are stored as absolute resolved paths without a trailing slash;
+    # strip one defensively in case a caller passes one anyway.
+    root = library_root.rstrip("/") or "/"
+    root_pattern = f"{_like_escape(root)}/%"
+    query_pattern = f"%{_like_escape(query)}%"
     async with aiosqlite.connect(db_path) as db:
         async with db.execute(
             """
             SELECT path, type, size, duration, codec, mtime FROM media
-            WHERE path LIKE ? AND path LIKE ?
+            WHERE path LIKE ? ESCAPE '\\' AND path LIKE ? ESCAPE '\\'
             ORDER BY path LIMIT ?
             """,
-            (f"{library_root}%", pattern, limit),
+            (root_pattern, query_pattern, limit),
         ) as cur:
             rows = await cur.fetchall()
     return [MediaRecord(path=r[0], media_type=r[1], size=r[2], duration=r[3], codec=r[4], mtime=r[5]) for r in rows]
