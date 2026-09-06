@@ -81,7 +81,7 @@ async def browse(path: str = Query(..., max_length=4096)) -> dict:
 
     if media_files:
         db_path = services.config().db_path
-        t = asyncio.create_task(indexer.index_folder(media_files, db_path))
+        t = asyncio.create_task(indexer.index_folder(media_files, db_path, services.roots()))
         t.add_done_callback(lambda f: f.exception() and log.error("index_folder failed: %s", f.exception()))
 
     results = [entry for e in entries if (entry := _entry(e)) is not None]

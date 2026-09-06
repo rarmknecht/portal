@@ -105,13 +105,13 @@ async def _index_file(path: Path, db_path: Path, roots: list[Path] | None = None
     await db.upsert(db_path, record)
 
 
-async def index_folder(files: list[Path], db_path: Path) -> None:
+async def index_folder(files: list[Path], db_path: Path, roots: list[Path] | None = None) -> None:
     """Index only the given files (those in a single viewed folder)."""
     sem = asyncio.Semaphore(8)
 
     async def _bounded(path: Path) -> None:
         async with sem:
-            await _index_file(path, db_path)
+            await _index_file(path, db_path, roots)
 
     await asyncio.gather(*[_bounded(f) for f in files], return_exceptions=True)
 
@@ -195,6 +195,20 @@ class _PortalEventHandler(FileSystemEventHandler):
             self._loop.call_soon_threadsafe(self._queue.put_nowait, ("deleted", event.src_path))
 
 
+async def _resolved_delete_key(path_str: str) -> str:
+    """Best-effort resolved DB key for a path that no longer exists. The file
+    itself can't be resolved any more (it's gone), but its parent directory
+    still exists, so resolve *that* and re-join the name — this mirrors how
+    _index_file() would have stored the row (under its resolved path) even
+    though the target is deleted and .resolve() on it would just return the
+    lexical path unchanged."""
+    p = Path(path_str)
+    try:
+        return str(await asyncio.to_thread(p.parent.resolve) / p.name)
+    except OSError:
+        return path_str
+
+
 async def _process_events(queue: asyncio.Queue, db_path: Path, roots: list[Path]) -> None:
     # Debounce: track in-flight paths to skip duplicate inotify events (content + metadata writes)
     in_flight: set[str] = set()
@@ -215,7 +229,16 @@ async def _process_events(queue: asyncio.Queue, db_path: Path, roots: list[Path]
             in_flight.add(path_str)
             asyncio.create_task(_handle(path_str))
         elif kind == "deleted":
-            await db.remove(db_path, path_str)
+            # The row is keyed by the *resolved* path (see _index_file), but
+            # watchdog only ever gives us the lexical event path. If the
+            # library root itself is a symlink (e.g. ~/Videos -> /mnt/media),
+            # the observer is scheduled on the link path, so delete events
+            # arrive lexical while the row lives under the real path — remove
+            # both so the stale row can't linger and 404 out of /search.
+            key = await _resolved_delete_key(path_str)
+            await db.remove(db_path, key)
+            if key != path_str:
+                await db.remove(db_path, path_str)
 
 
 async def start_watcher(roots: list[Path], db_path: Path) -> None:
