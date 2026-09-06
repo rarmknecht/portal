@@ -14,7 +14,9 @@ from watchdog.observers import Observer
 from portal import db
 from portal.allowlist import within_any
 from portal.media_types import media_type as _media_type
-from portal.thumbnailer import _reap
+from portal.thumbnailer import reap
+
+_reap = reap  # backward-compat alias for external diagnostics; internal code calls reap() below
 
 log = logging.getLogger(__name__)
 
@@ -64,7 +66,7 @@ async def _probe_file(path: Path) -> tuple[float | None, str | None]:
         return None, None
     finally:
         if proc is not None:
-            await _reap(proc)
+            await reap(proc)
 
 
 async def _index_file(path: Path, db_path: Path, roots: list[Path] | None = None) -> None:

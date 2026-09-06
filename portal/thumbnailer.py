@@ -48,15 +48,38 @@ async def get_thumbnail(
     )
 
 
-async def _reap(proc: asyncio.subprocess.Process) -> None:
+async def reap(proc: asyncio.subprocess.Process) -> None:
     """Kill *proc* if it's still running and reap it, so a timed-out or
-    cancelled child never lingers as an orphan/zombie."""
+    cancelled child never lingers as an orphan/zombie.
+
+    With stdout/stderr=PIPE, asyncio's subprocess transport only resolves
+    proc.wait() once its pipe transports have disconnected. If the child is
+    a forking shell wrapper (some distro/flatpak/nix ffprobe shims are `sh`
+    scripts) rather than exec'ing directly, killing it leaves an orphaned
+    grandchild holding the pipe's write end open — proc.wait() then blocks
+    for that grandchild's entire remaining lifetime. Close the pipe
+    transports ourselves right after kill() so wait() isn't held hostage,
+    and bound the wait as a belt-and-braces guard in case that isn't
+    enough.
+    """
     if proc.returncode is None:
         try:
             proc.kill()
         except ProcessLookupError:
             pass
-        await proc.wait()
+        transport = getattr(proc, "_transport", None)
+        if transport is not None:
+            for fd in (1, 2):
+                pipe = transport.get_pipe_transport(fd)
+                if pipe is not None:
+                    pipe.close()
+        try:
+            await asyncio.wait_for(proc.wait(), 5)
+        except asyncio.TimeoutError:
+            log.warning("Timed out waiting to reap killed process pid=%s", getattr(proc, "pid", "?"))
+
+
+_reap = reap  # backward-compat alias; internal callers use reap() above
 
 
 async def _run_ffmpeg(cmd: list[str], dest: Path) -> bytes | None:
@@ -83,7 +106,7 @@ async def _run_ffmpeg(cmd: list[str], dest: Path) -> bytes | None:
         dest.unlink(missing_ok=True)
     finally:
         if proc is not None:
-            await _reap(proc)
+            await reap(proc)
     return None
 
 
