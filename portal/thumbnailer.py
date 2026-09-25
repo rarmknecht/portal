@@ -9,6 +9,8 @@ import os
 import signal
 from pathlib import Path
 
+from portal.media_types import media_type
+
 log = logging.getLogger(__name__)
 
 _FFMPEG_TIMEOUT = 10  # seconds
@@ -28,6 +30,14 @@ _sem: asyncio.Semaphore | None = None
 # new thumbnails rather than after each one.
 _EVICT_EVERY = 25
 _writes_since_evict = 0
+
+
+def is_image(data: bytes) -> bool:
+    """True if *data* starts like a JPEG or PNG. ffmpeg exits 0 for a
+    stream-copied "frame" of any video, but what it writes into a .jpg is
+    the raw compressed packet; only real image bytes may be cached and
+    served as image/jpeg."""
+    return data[:3] == b"\xff\xd8\xff" or data[:8] == b"\x89PNG\r\n\x1a\n"
 
 
 def snap_size(size: int) -> int:
@@ -112,7 +122,10 @@ async def get_thumbnail(
             pass
 
         data = None
-        if prefer_embedded:
+        # Embedded art only makes sense for audio: on a video, stream-copying
+        # the first "frame" succeeds and yields a raw video packet, not a
+        # picture. Videos always go through the frame-grab below.
+        if prefer_embedded and media_type(media_path) == "audio":
             data = await _run_ffmpeg(
                 ["ffmpeg", "-y", "-i", str(media_path), "-an", "-vcodec", "copy", "-frames:v", "1", str(cached)],
                 cached,
@@ -190,9 +203,14 @@ async def _run_ffmpeg(cmd: list[str], dest: Path) -> bytes | None:
         await asyncio.wait_for(proc.wait(), timeout=_FFMPEG_TIMEOUT)
         if proc.returncode == 0:
             try:
-                return dest.read_bytes()
+                data = dest.read_bytes()
             except FileNotFoundError:
                 return None
+            if is_image(data):
+                return data
+            log.warning("ffmpeg wrote non-image output for %s; discarding", dest.name)
+            dest.unlink(missing_ok=True)
+            return None
     except asyncio.TimeoutError:
         dest.unlink(missing_ok=True)
     except FileNotFoundError:
