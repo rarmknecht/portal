@@ -49,7 +49,6 @@ ProtectHostname=yes
 RestrictRealtime=yes
 RestrictSUIDSGID=yes
 LockPersonality=yes
-MemoryDenyWriteExecute=yes
 RestrictNamespaces=yes
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
@@ -57,7 +56,6 @@ SystemCallFilter=~@privileged @resources
 # AF_NETLINK: getifaddrs() (used by zeroconf's ifaddr) talks to the kernel
 # over netlink; AF_UNIX for the journal and DNS.
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
-CapabilityBoundingSet=
 UMask=0077
 
 [Install]
