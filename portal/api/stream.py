@@ -5,14 +5,21 @@ from __future__ import annotations
 import mimetypes
 from pathlib import Path
 
+import aiofiles
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
 
 from portal import path_registry, services
+from portal.media_types import media_type as _media_type
 
 router = APIRouter()
 
 _CHUNK = 1024 * 1024  # 1 MiB
+
+# Never let a browser sniff a served file into something executable: a
+# token can name any file inside a library, and libraries can contain
+# things that aren't media.
+_COMMON_HEADERS = {"Accept-Ranges": "bytes", "X-Content-Type-Options": "nosniff"}
 
 
 @router.get("/stream")
@@ -23,6 +30,10 @@ async def stream(
     resolved = path_registry.resolve_and_check(path, services.roots())
     if not resolved.is_file():
         raise HTTPException(status_code=400, detail="Not a file")
+    if _media_type(resolved) is None:
+        # Browse lists everything in a library (unplayable files are shown
+        # greyed out), but only media is ever served.
+        raise HTTPException(status_code=415, detail="Not a media file")
 
     file_size = resolved.stat().st_size
     media_type = mimetypes.guess_type(resolved.name)[0] or "application/octet-stream"
@@ -34,7 +45,7 @@ async def stream(
     return StreamingResponse(
         _iter_file(resolved, 0, file_size),
         media_type=media_type,
-        headers={"Content-Length": str(file_size), "Accept-Ranges": "bytes"},
+        headers={"Content-Length": str(file_size), **_COMMON_HEADERS},
     )
 
 
@@ -48,7 +59,7 @@ def _range_response(path: Path, range_header: str, file_size: int, media_type: s
         headers={
             "Content-Range": f"bytes {start}-{end}/{file_size}",
             "Content-Length": str(length),
-            "Accept-Ranges": "bytes",
+            **_COMMON_HEADERS,
         },
     )
 
@@ -105,11 +116,13 @@ def _parse_range(header: str, file_size: int) -> tuple[int, int]:
 
 
 async def _iter_file(path: Path, start: int, stop: int):
-    with open(path, "rb") as f:
-        f.seek(start)
+    # aiofiles does the reads on a worker thread, so a slow disk or a
+    # stalled network mount doesn't block every other request on the loop.
+    async with aiofiles.open(path, "rb") as f:
+        await f.seek(start)
         remaining = stop - start
         while remaining > 0:
-            chunk = f.read(min(_CHUNK, remaining))
+            chunk = await f.read(min(_CHUNK, remaining))
             if not chunk:
                 break
             remaining -= len(chunk)
