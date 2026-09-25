@@ -1,5 +1,11 @@
 """Token-based API authentication — fails closed when api_token is unset in config.
 
+The token is accepted only as an ``Authorization: Bearer`` header. A
+``?token=`` query form used to be accepted for media players that could
+not set headers; portal-app has sent the header on every request since
+its commit 963b039, and a token in a URL leaks into logs, caches and
+media-session metadata, so the query form is gone.
+
 Every failed attempt is logged with the peer address, and a peer that keeps
 failing is throttled (HTTP 429) for a short window. The media API is
 LAN-facing with a single shared secret, so this is the only visibility an
@@ -13,13 +19,12 @@ import logging
 import time
 
 from fastapi import HTTPException, Request, Security
-from fastapi.security import APIKeyHeader, APIKeyQuery
+from fastapi.security import APIKeyHeader
 
 from portal import services
 
 log = logging.getLogger(__name__)
 
-_query_scheme = APIKeyQuery(name="token", auto_error=False)
 _header_scheme = APIKeyHeader(name="Authorization", auto_error=False)
 
 # Throttle: more than _FAIL_LIMIT failures from one peer inside _FAIL_WINDOW
@@ -65,7 +70,6 @@ def _reject(request: Request, reason: str) -> HTTPException:
 
 async def verify_token(
     request: Request,
-    query_token: str | None = Security(_query_scheme),
     header_token: str | None = Security(_header_scheme),
 ) -> None:
     peer = _peer(request)
@@ -85,8 +89,8 @@ async def verify_token(
         # practice; if it does, reject rather than let requests through.
         raise _reject(request, "no api_token configured")
 
-    provided = query_token
-    if not provided and header_token:
+    provided = None
+    if header_token:
         provided = header_token[7:] if header_token.startswith("Bearer ") else header_token
 
     if not provided:

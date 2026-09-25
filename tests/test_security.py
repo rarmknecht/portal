@@ -82,13 +82,22 @@ def test_wrong_token_rejected(api):
 
 
 def test_non_ascii_token_is_401_not_500(api):
-    r = api.get("/api/v1/libraries", params={"token": "\u00e9"})
+    # Sent as raw latin-1 bytes, which is what actually arrives on the wire;
+    # the str form of compare_digest would raise on this and turn it into a 500.
+    r = api.get("/api/v1/libraries", headers={b"Authorization": "Bearer \u00e9".encode("latin-1")})
     assert r.status_code == 401
 
 
-def test_header_and_query_token_accepted(api):
+def test_header_token_accepted(api):
     assert api.get("/api/v1/libraries", headers=_auth()).status_code == 200
-    assert api.get("/api/v1/libraries", params={"token": TOKEN}).status_code == 200
+
+
+def test_query_token_no_longer_accepted(api):
+    # The ?token= form leaked the secret into URLs; only the header works now.
+    r = api.get("/api/v1/libraries", params={"token": TOKEN})
+    assert r.status_code == 401
+    r = api.get("/api/v1/libraries", params={"token": TOKEN}, headers=_auth())
+    assert r.status_code == 200  # a stray query param is ignored, not fatal
 
 
 def test_repeated_failures_throttle_peer(api):
