@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import secrets
+import stat
 import sys
 from pathlib import Path
 
@@ -80,9 +82,27 @@ def _ensure_api_token(cfg: cfg_mod.Config, path: Path) -> bool:
     return True
 
 
+def _tighten(path: Path, mode: int) -> None:
+    """chmod *path* to *mode* if it exists, is ours, and isn't a symlink.
+    Best effort — a read-only or foreign filesystem just logs."""
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return
+    if stat.S_ISLNK(st.st_mode) or st.st_uid != os.getuid():
+        return
+    if st.st_mode & 0o777 != mode:
+        try:
+            os.chmod(path, mode)
+        except OSError as exc:
+            log.warning("Could not chmod %s to %o: %s", path, mode, exc)
+
+
 def _build_media_app() -> FastAPI:
     from fastapi import Depends
-    app = FastAPI(title="Portal Media API", version="1.0")
+    # No interactive docs on the LAN-facing port: /docs, /redoc and
+    # /openapi.json are unauthenticated and describe every route.
+    app = FastAPI(title="Portal Media API", version="1.0", docs_url=None, redoc_url=None, openapi_url=None)
     prefix = "/api/v1"
     guarded = {"dependencies": [Depends(auth.verify_token)]}
     app.include_router(health.router, prefix=prefix)  # health exempt — used for connectivity probing
@@ -96,7 +116,7 @@ def _build_media_app() -> FastAPI:
 
 
 def _build_ui_app() -> FastAPI:
-    app = FastAPI(title="Portal Web UI", version="1.0")
+    app = FastAPI(title="Portal Web UI", version="1.0", docs_url=None, redoc_url=None, openapi_url=None)
     # The UI has no auth of its own (see portal/ui/security.py) — it relies
     # entirely on being loopback-only. This middleware enforces that on
     # every request, since app.include_router() alone applies no such check.
@@ -140,10 +160,22 @@ async def _run() -> None:
 
     services.init(cfg, roots)
 
+    # Everything this process creates from here on (index.db and its WAL,
+    # thumbnails, temp files) is owner-only: the catalog and thumbnails of
+    # someone's media are theirs, not every local account's.
+    os.umask(0o077)
+
     cfg.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     for d in (cfg.thumbnails.cache_dir, cfg.logging.log_dir):
         d.mkdir(parents=True, exist_ok=True)
     thumbnailer.ensure_cache_dir(cfg.thumbnails.cache_dir)
+
+    # Tighten what an older version may have created world-readable.
+    for d in (cfg.data_dir, cfg.thumbnails.cache_dir, cfg.logging.log_dir):
+        if d != Path.home():
+            _tighten(d, 0o700)
+    for suffix in ("", "-wal", "-shm"):
+        _tighten(Path(str(cfg.db_path) + suffix), 0o600)
 
     await db.init(cfg.db_path)
 
