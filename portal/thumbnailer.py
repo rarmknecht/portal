@@ -14,6 +14,35 @@ log = logging.getLogger(__name__)
 _FFMPEG_TIMEOUT = 10  # seconds
 _ffmpeg_missing_logged = False
 
+# Only these widths are ever rendered. Any requested size snaps up to the
+# next one, so a client can't mint a fresh ffmpeg run and cache file for
+# every integer between 64 and 1280.
+SIZES = (160, 320, 640, 1280)
+
+# Cap on ffmpeg processes running for thumbnails at once, across all
+# requests. Anything beyond this waits its turn instead of forking.
+_MAX_CONCURRENT = 4
+_sem: asyncio.Semaphore | None = None
+
+# Cache-size enforcement is a directory walk, so only do it every so many
+# new thumbnails rather than after each one.
+_EVICT_EVERY = 25
+_writes_since_evict = 0
+
+
+def snap_size(size: int) -> int:
+    for s in SIZES:
+        if size <= s:
+            return s
+    return SIZES[-1]
+
+
+def _semaphore() -> asyncio.Semaphore:
+    global _sem
+    if _sem is None:
+        _sem = asyncio.Semaphore(_MAX_CONCURRENT)
+    return _sem
+
 
 def _cache_key(media_path: Path, size: int) -> str:
     # SHA-1 here only names a cache file, not a security control.
@@ -22,12 +51,52 @@ def _cache_key(media_path: Path, size: int) -> str:
     return f"{h}_{size}.jpg"
 
 
+def enforce_cache_limit(cache_dir: Path, max_bytes: int) -> int:
+    """Delete the least recently used thumbnails until the cache is under
+    *max_bytes* (with a little headroom so this doesn't run on every
+    write). Returns the number of files removed. Blocking; call it from a
+    worker thread."""
+    if max_bytes <= 0:
+        return 0
+    entries: list[tuple[float, int, Path]] = []
+    total = 0
+    try:
+        with os.scandir(cache_dir) as it:
+            for e in it:
+                if not e.is_file(follow_symlinks=False) or not e.name.endswith(".jpg"):
+                    continue
+                st = e.stat(follow_symlinks=False)
+                entries.append((st.st_atime, st.st_size, Path(e.path)))
+                total += st.st_size
+    except OSError:
+        return 0
+    if total <= max_bytes:
+        return 0
+    target = int(max_bytes * 0.9)
+    removed = 0
+    for _, size, p in sorted(entries):
+        if total <= target:
+            break
+        try:
+            p.unlink()
+        except OSError:
+            continue
+        total -= size
+        removed += 1
+    if removed:
+        log.info("Thumbnail cache over %d MiB; evicted %d files", max_bytes // (1024 * 1024), removed)
+    return removed
+
+
 async def get_thumbnail(
     media_path: Path,
     cache_dir: Path,
     size: int = 320,
     prefer_embedded: bool = True,
+    max_cache_bytes: int = 0,
 ) -> bytes | None:
+    global _writes_since_evict
+    size = snap_size(size)
     cached = cache_dir / _cache_key(media_path, size)
 
     try:
@@ -35,19 +104,32 @@ async def get_thumbnail(
     except FileNotFoundError:
         pass
 
-    if prefer_embedded:
-        data = await _run_ffmpeg(
-            ["ffmpeg", "-y", "-i", str(media_path), "-an", "-vcodec", "copy", "-frames:v", "1", str(cached)],
-            cached,
-        )
-        if data is not None:
-            return data
+    async with _semaphore():
+        # Another request may have rendered it while we waited.
+        try:
+            return cached.read_bytes()
+        except FileNotFoundError:
+            pass
 
-    return await _run_ffmpeg(
-        ["ffmpeg", "-y", "-ss", "00:00:05", "-i", str(media_path), "-frames:v", "1",
-         "-vf", f"scale={size}:-1", "-f", "image2", str(cached)],
-        cached,
-    )
+        data = None
+        if prefer_embedded:
+            data = await _run_ffmpeg(
+                ["ffmpeg", "-y", "-i", str(media_path), "-an", "-vcodec", "copy", "-frames:v", "1", str(cached)],
+                cached,
+            )
+        if data is None:
+            data = await _run_ffmpeg(
+                ["ffmpeg", "-y", "-ss", "00:00:05", "-i", str(media_path), "-frames:v", "1",
+                 "-vf", f"scale={size}:-1", "-f", "image2", str(cached)],
+                cached,
+            )
+
+    if data is not None and max_cache_bytes > 0:
+        _writes_since_evict += 1
+        if _writes_since_evict >= _EVICT_EVERY:
+            _writes_since_evict = 0
+            await asyncio.to_thread(enforce_cache_limit, cache_dir, max_cache_bytes)
+    return data
 
 
 async def reap(proc: asyncio.subprocess.Process) -> None:
