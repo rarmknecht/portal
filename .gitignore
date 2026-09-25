@@ -13,3 +13,4 @@ venv/
 *.db
 *.db-wal
 *.db-shm
+tests/__pycache__/
