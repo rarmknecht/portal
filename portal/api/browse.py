@@ -59,13 +59,11 @@ def _safe_entries(directory: Path, roots: list[Path]) -> list[Path]:
     return safe
 
 
-@router.get("/browse")
-async def browse(path: str = Query(..., max_length=4096)) -> dict:
-    resolved = path_registry.resolve_and_check(path, services.roots())
-    if not resolved.is_dir():
-        raise HTTPException(status_code=400, detail="Path is not a directory")
-
-    entries = sorted(_safe_entries(resolved, services.roots()), key=lambda p: (not p.is_dir(), p.name.lower()))
+def _list_directory(resolved: Path, roots: list[Path]) -> tuple[list[dict], list[Path]]:
+    """Everything that touches the filesystem for one /browse call: list,
+    filter, sort, stat, and mint tokens. Blocking — runs on a worker thread
+    so a big directory or a sleeping network mount can't stall the loop."""
+    entries = sorted(_safe_entries(resolved, roots), key=lambda p: (not p.is_dir(), p.name.lower()))
 
     # Index under the *resolved* path so the DB key matches the token
     # (token_for() resolves too) — otherwise /metadata looks up an in-root
@@ -79,10 +77,21 @@ async def browse(path: str = Query(..., max_length=4096)) -> dict:
         except OSError:
             continue
 
+    results = [entry for e in entries if (entry := _entry(e)) is not None]
+    return results, media_files
+
+
+@router.get("/browse")
+async def browse(path: str = Query(..., max_length=4096)) -> dict:
+    resolved = path_registry.resolve_and_check(path, services.roots())
+    if not resolved.is_dir():
+        raise HTTPException(status_code=400, detail="Path is not a directory")
+
+    results, media_files = await asyncio.to_thread(_list_directory, resolved, services.roots())
+
     if media_files:
         db_path = services.config().db_path
         t = asyncio.create_task(indexer.index_folder(media_files, db_path, services.roots()))
         t.add_done_callback(lambda f: f.exception() and log.error("index_folder failed: %s", f.exception()))
 
-    results = [entry for e in entries if (entry := _entry(e)) is not None]
     return {"path": path, "entries": results}
