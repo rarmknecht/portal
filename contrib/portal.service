@@ -1,0 +1,64 @@
+# Portal as a per-user systemd service.
+#
+# Install:
+#   mkdir -p ~/.config/systemd/user
+#   cp contrib/portal.service ~/.config/systemd/user/portal.service
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now portal.service
+#
+# Adjust the two paths under [Service] if the checkout lives elsewhere, and
+# add any library directory outside your home to ReadOnlyPaths= if the
+# sandbox hides it (ProtectSystem=strict already leaves most of the
+# filesystem readable; /mnt and /media are fine).
+#
+# Check the result with:  systemd-analyze --user security portal.service
+
+[Unit]
+Description=Portal Media Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/projects/portal
+ExecStart=%h/projects/portal/.venv/bin/portal
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=portal
+
+# --- Sandbox -----------------------------------------------------------
+# Portal runs ffmpeg/ffprobe over every file in your libraries, and media
+# demuxers are a perennial source of memory-safety bugs. Contain what a
+# hostile file could reach: the process only needs to read libraries and
+# write under ~/.portal.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.portal
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictNamespaces=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+# AF_NETLINK: getifaddrs() (used by zeroconf's ifaddr) talks to the kernel
+# over netlink; AF_UNIX for the journal and DNS.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+CapabilityBoundingSet=
+UMask=0077
+
+[Install]
+WantedBy=default.target
