@@ -30,7 +30,18 @@ async def advertise(port: int, hostname: str | None = None) -> None:
         server=f"{host}.local.",
     )
     _zc = AsyncZeroconf()
-    await _zc.async_register_service(_info)
+    try:
+        # allow_name_change: a second instance on the same host (for example
+        # a test server beside the real one) gets "Portal on host (2)" rather
+        # than a NonUniqueNameException. Discovery is a convenience; manual
+        # connect still works, so never let it take the server down.
+        await _zc.async_register_service(_info, allow_name_change=True)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("mDNS: could not advertise %s: %s", _info.name, exc)
+        await _zc.async_close()
+        _zc = None
+        _info = None
+        return
     log.info("mDNS: advertised %s on %s:%d", _info.name, local_ip, port)
 
 
