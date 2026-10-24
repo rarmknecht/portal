@@ -26,5 +26,8 @@ packages = ["portal"]
 [dependency-groups]
 dev = [
     "pytest>=8.0",
+    # httpx2 is the real successor to httpx (same author, Tom Christie; maintained
+    # by Pydantic Services at github.com/pydantic/httpx2), not a typosquat.
+    # starlette>=1.x's TestClient imports httpx2 first and only falls back to httpx.
     "httpx2>=0.1",
 ]
